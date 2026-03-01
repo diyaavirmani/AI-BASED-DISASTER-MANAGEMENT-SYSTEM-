@@ -1,0 +1,50 @@
+# requirements.txt - Core packages
+# Deep learning
+torch
+torchvision
+torchaudio
+
+# Alternative DL framework
+tensorflow
+keras
+
+# Geospatial processing
+rasterio
+gdal
+geopandas
+shapely
+
+# Satellite data APIs
+sentinelhub
+earthengine-api
+
+# Image processing + ML
+opencv-python
+scikit-learn
+numpy
+
+# Backend + async tasks
+fastapi
+uvicorn
+celery
+redis
+
+# Database
+psycopg2
+sqlalchemy
+postgis
+
+# SAM model
+transformers
+torch-segment-anything
+
+# Crowdsource data
+tweepy
+requests
+beautifulsoup4
+
+# Visualization
+leaflet
+folium
+plotly
+streamlit

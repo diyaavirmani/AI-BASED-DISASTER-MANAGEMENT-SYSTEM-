@@ -1,0 +1,1 @@
+# SAM + RSPrompter integration placeholder
