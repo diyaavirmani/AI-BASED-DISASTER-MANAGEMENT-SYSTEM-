@@ -10,7 +10,7 @@ keras
 
 # Geospatial processing
 rasterio
-gdal
+# gdal  # requires system dependencies, install via conda or separately
 geopandas
 shapely
 
@@ -36,7 +36,7 @@ postgis
 
 # SAM model
 transformers
-torch-segment-anything
+# torch-segment-anything  # not available on PyPI, install manually or remove
 
 # Crowdsource data
 tweepy
