@@ -1,0 +1,42 @@
+paths:
+  - src/data_pipeline/landsat_fetcher.py
+  - src/data_pipeline/nlp_filter.py
+  - src/data_pipeline/dataset_builder.py
+  - src/data_pipeline/satellite_fetcher.py
+  - src/data_pipeline/preprocessor.py
+  - requirements.txt
+  - .env
+
+sentinel:
+  tile_size: 512
+  bands:
+    - B2
+    - B3
+    - B4
+    - B8  # Blue, Green, Red, NIR
+  cloud_cover_threshold: 20
+  temporal_window: 30  # days before and after disaster
+  resolution: 10  # meters
+
+model:
+  encoder: resnet50
+  num_classes: 4
+
+training:
+  batch_size: 8
+  learning_rate: 0.0001
+  max_epochs: 100
+  patience: 10
+  val_split: 0.2
+
+paths:
+  data_dir: data/raw
+  processed_data_dir: data/processed
+  model_checkpoint_dir: checkpoints
+  logs_dir: logs
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins:
+    - "*"
