@@ -13,6 +13,8 @@ import numpy as np
 from pathlib import Path
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from scipy.ndimage import uniform_filter
+import yaml
+from src.data_pipeline.index_calculator import compute_all_indices
 
 def load_geotiff(filepath):
     with rasterio.open(filepath) as dataset:
@@ -225,4 +227,148 @@ def stitch_tiles(tiles, positions, full_height, full_width, overlap=32):
     output = np.where(count > 0, output / count, 0)
     return output
 
+    """load raw images-> reproject to common CRS-> coregister before and after images-> compute coherence-> normalize-> tile for model input
+    
+    """
 
+
+def preprocess_event(event_name, config_path="configs/config.yaml"):
+    
+    # ── Step 1: Load config ──────────────────────────────
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    
+    raw_dir       = Path(config["paths"]["raw_data_dir"])
+    processed_dir = Path(config["paths"]["processed_data_dir"])
+    tile_size     = config["sentinel"]["tile_size"]
+    overlap       = config["sentinel"]["overlap"]
+    
+    event_raw  = raw_dir / event_name
+    event_out  = processed_dir / event_name
+    event_out.mkdir(parents=True, exist_ok=True)
+    
+    print(f"[1/7] Starting preprocessing for event: {event_name}")
+    
+    # ── Step 2: Load raw images ──────────────────────────
+    s2_before_path = event_raw / "sentinel2_before.tif"
+    s2_after_path  = event_raw / "sentinel2_after.tif"
+    s1_before_path = event_raw / "sentinel1_before.tif"
+    s1_after_path  = event_raw / "sentinel1_after.tif"
+    
+    s2_before, s2_before_meta = load_geotiff(s2_before_path)
+    s2_after,  s2_after_meta  = load_geotiff(s2_after_path)
+    s1_before, s1_before_meta = load_geotiff(s1_before_path)
+    s1_after,  s1_after_meta  = load_geotiff(s1_after_path)
+    
+    print(f"[2/7] Loaded raw images.")
+    print(f"      S2 before shape: {s2_before.shape}")
+    print(f"      S1 before shape: {s1_before.shape}")
+    
+    # ── Step 3: Reproject everything to WGS84 ───────────
+    s2_before, s2_before_meta = reproject_to_common_crs(s2_before, s2_before_meta)
+    s2_after,  s2_after_meta  = reproject_to_common_crs(s2_after,  s2_after_meta)
+    s1_before, s1_before_meta = reproject_to_common_crs(s1_before, s1_before_meta)
+    s1_after,  s1_after_meta  = reproject_to_common_crs(s1_after,  s1_after_meta)
+    
+    print("[3/7] Reprojected all images to WGS84.")
+    
+    # ── Step 4: Co-register — align after to before ─────
+    s2_before, s2_before_meta, s2_after, s2_after_meta = coregister_images(
+        s2_before, s2_after, s2_before_meta, s2_after_meta
+    )
+    s1_before, s1_before_meta, s1_after, s1_after_meta = coregister_images(
+        s1_before, s1_after, s1_before_meta, s1_after_meta
+    )
+    
+    print("[4/7] Co-registered before/after image pairs.")
+    
+    # ── Step 5: Compute SAR coherence ───────────────────
+    # Use VV band (index 0) for coherence computation
+    coherence_before = compute_coherence(
+        s1_before[0], s1_before[0],   # before vs before = baseline
+        window_size=5
+    )
+    coherence_after = compute_coherence(
+        s1_before[0], s1_after[0],    # before vs after = actual change
+        window_size=5
+    )
+    coherence_delta = coherence_after - coherence_before
+    
+    print("[5/7] Computed SAR coherence maps.")
+    
+    # ── Step 6: Compute spectral indices ────────────────
+    band_dict_before = {
+        "red":   s2_before[3],   # Band 4 = Red
+        "nir":   s2_before[7],   # Band 8 = NIR
+        "green": s2_before[2],   # Band 3 = Green
+        "swir":  s2_before[11],  # Band 12 = SWIR2
+    }
+    band_dict_after = {
+        "red":   s2_after[3],
+        "nir":   s2_after[7],
+        "green": s2_after[2],
+        "swir":  s2_after[11],
+    }
+    
+    indices = compute_all_indices(band_dict_before, band_dict_after)
+    
+    print("[6/7] Computed spectral indices (NDVI, NDWI, NBR, deltas).")
+    
+    # ── Step 7: Stack all channels into one array ────────
+    # Shape: (22, H, W)
+    full_array = np.concatenate([
+        s2_after,                                          # 6 optical bands
+        s1_after,                                          # 4 SAR bands (VV, VH x2)
+        np.stack([                                         # 5 indices
+            indices["ndvi_post"],
+            indices["ndwi_post"],
+            indices["nbr_post"],
+            indices["delta_ndvi"],
+            indices["delta_nbr"]
+        ]),
+        np.stack([                                         # 3 CCD bands
+            coherence_before,
+            coherence_after,
+            coherence_delta
+        ]),
+    ], axis=0)
+    
+    print(f"      Stacked array shape: {full_array.shape}")  
+    # Expected: (18, H, W) — remaining 4 channels added later
+    
+    # ── Step 8: Normalize ────────────────────────────────
+    # Use minmax for optical + indices, zscore for SAR
+    optical_normalized = normalize_image(full_array[:6],   method='minmax')
+    sar_normalized     = normalize_image(full_array[6:10], method='zscore')
+    indices_normalized = normalize_image(full_array[10:],  method='minmax')
+    
+    normalized_array = np.concatenate([
+        optical_normalized,
+        sar_normalized,
+        indices_normalized
+    ], axis=0)
+    
+    print("[7/7] Normalized all channels.")
+    
+    # ── Step 9: Tile and save ────────────────────────────
+    tiles, positions = tile_image(
+        normalized_array,
+        tile_size=tile_size,
+        overlap=overlap
+    )
+    
+    tiles_dir = event_out / "tiles"
+    tiles_dir.mkdir(exist_ok=True)
+    
+    for idx, (tile, pos) in enumerate(zip(tiles, positions)):
+        tile_path = tiles_dir / f"tile_{idx:04d}.npy"
+        np.save(tile_path, tile)
+    
+    # Save positions so you can stitch results back later
+    positions_path = event_out / "tile_positions.npy"
+    np.save(positions_path, positions)
+    
+    print(f"Preprocessing complete.")
+    print(f"Saved {len(tiles)} tiles to: {tiles_dir}")
+    
+    return tiles_dir, positions_path
