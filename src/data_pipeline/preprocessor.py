@@ -12,6 +12,7 @@ import rasterio
 import numpy as np
 from pathlib import Path
 from rasterio.warp import calculate_default_transform, reproject, Resampling
+from scipy.ndimage import uniform_filter
 
 def load_geotiff(filepath):
     with rasterio.open(filepath) as dataset:
@@ -73,3 +74,72 @@ def reproject_to_common_crs(src_array,src_meta,target_crs):
     })
     
     return reprojected, new_meta
+    """
+    Reprojection mathematically re-expresses every pixel's location in a new coordinate system. After reprojection, pixel (100, 200) in your Sentinel-1 SAR image and pixel (100, 200) in your Sentinel-2 optical image both represent the exact same 10×10 metre square of ground in Turkey.
+    When you save your damage zones to PostGIS and display them on your Leaflet/Mapbox dashboard, the coordinates must be in WGS84. So you reproject everything to WGS84 early in the pipeline and keep it consistent throughout.
+    """
+    
+def coregister_images (before_array, before_meta, after_array, after_meta):
+    ref_transform=before_meta["transform"]
+    ref_crs=before_meta["crs"]
+    ref_shape=(before_meta["height"], before_meta["width"])
+    
+    bands=after_array.shape[0]
+    
+    aligned_after=np.zeros(
+        (bands, ref_shape[0], ref_shape[1]),
+        dtype=after_meta["dtype"]
+    )
+    
+    for i in range(bands):
+        reproject(
+            source=after_array[i],
+            destination=aligned_after[i],
+            src_transform=after_meta["transform"],
+            src_crs=after_meta["crs"],
+            dst_transform=ref_transform,
+            dst_crs=ref_crs,
+            resampling=Resampling.bilinear
+        )
+        
+    aligned_meta=after_meta.copy()
+    aligned_meta.update({
+        "transform":ref_transform,
+        "crs":ref_crs,
+        "width":ref_shape[1],
+        "height":ref_shape[0]
+    })
+    
+    return aligned_after, aligned_meta,before_array, before_meta
+
+    """
+     Co-regis tration solves a different, subtler problem: even after both images are in WGS84, they might still not align at the pixel level.  
+     handleing the false positives
+    """
+    
+def compute_coherence(sar_before,sar_after,window_Size=5):
+    before =sar_before.astype(np.complex64)
+    after=sar_after.astype(np.compex64)
+    
+    cross=before*after.conj(after)
+    
+    power_before=before*np.conj(before)
+    power_after=after*np.conj(after)
+    
+    avg_cross=uniform_filter(np.abs(cross), size=window_Size)
+    avg_power_before=uniform_filter(power_before,size=window_Size)
+    avg_power_after=uniform_filter(power_after,size=window_Size)
+    
+    denominator=np.sqrt(avg_power_before*avg_power_after)
+    
+    coherence=np.where(
+        
+        denominator>0,
+        avg_cross/denominator,
+        0
+    )
+    
+    coherence=np.clip(coherence,0,1)
+    
+    return coherence.astype(np.float32)
+
