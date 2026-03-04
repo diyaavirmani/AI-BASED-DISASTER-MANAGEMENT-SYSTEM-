@@ -117,29 +117,112 @@ def coregister_images (before_array, before_meta, after_array, after_meta):
      handleing the false positives
     """
     
-def compute_coherence(sar_before,sar_after,window_Size=5):
-    before =sar_before.astype(np.complex64)
-    after=sar_after.astype(np.compex64)
-    
-    cross=before*after.conj(after)
-    
-    power_before=before*np.conj(before)
-    power_after=after*np.conj(after)
-    
-    avg_cross=uniform_filter(np.abs(cross), size=window_Size)
-    avg_power_before=uniform_filter(power_before,size=window_Size)
-    avg_power_after=uniform_filter(power_after,size=window_Size)
-    
-    denominator=np.sqrt(avg_power_before*avg_power_after)
-    
-    coherence=np.where(
-        
-        denominator>0,
-        avg_cross/denominator,
+def compute_coherence(sar_before, sar_after, window_Size=5):
+    before = sar_before.astype(np.complex64)
+    after = sar_after.astype(np.complex64)
+
+    # product of complex numbers: before * conj(after)
+    cross = before * np.conj(after)
+
+    power_before = before * np.conj(before)
+    power_after = after * np.conj(after)
+
+    avg_cross = uniform_filter(np.abs(cross), size=window_Size)
+    avg_power_before = uniform_filter(power_before, size=window_Size)
+    avg_power_after = uniform_filter(power_after, size=window_Size)
+
+    denominator = np.sqrt(avg_power_before * avg_power_after)
+
+    coherence = np.where(
+        denominator > 0,
+        avg_cross / denominator,
         0
     )
-    
-    coherence=np.clip(coherence,0,1)
-    
+
+    coherence = np.clip(coherence, 0, 1)
+
     return coherence.astype(np.float32)
+
+def normalize_image(array, method="minmax"):
+    """Normalize a multi-band image array.
+
+    Args:
+        array (np.ndarray): shape (bands, h, w)
+        method (str): "minmax" or "zscore"
+
+    Returns:
+        np.ndarray: normalized data same shape
+    """
+    array = array.astype(np.float32)
+    normalized = np.zeros_like(array)
+
+    if method == "minmax":
+        for i in range(array.shape[0]):
+            band = array[i]
+            min_val = np.min(band)
+            max_val = np.max(band)
+
+            if max_val - min_val == 0:
+                normalized[i] = 0.0
+            else:
+                normalized[i] = (band - min_val) / (max_val - min_val)
+    elif method == "zscore":
+        for i in range(array.shape[0]):
+            band = array[i]
+            mean = np.nanmean(band)
+            std = np.nanstd(band)
+
+            if std == 0:
+                normalized[i] = 0.0
+            else:
+                normalized[i] = (band - mean) / std
+    else:
+        raise ValueError(f"Unknown normalization method: {method}")
+    # summary comment removed; not part of function
+def tile_image(array, tile_size=256, overlap=32):
+    bands, height, width = array.shape
+    stride = tile_size - overlap
+    tiles = []
+    positions = []
+    y = 0
+
+    while y < height:
+        y_start = min(y, height - tile_size)
+        y_end = y_start + tile_size
+
+        x = 0
+        while x < width:
+            x_start = min(x, width - tile_size)
+            x_end = x_start + tile_size
+
+            tile = array[:, y_start:y_end, x_start:x_end]
+            tiles.append(tile)
+            positions.append((y_start, y_end, x_start, x_end))
+
+            x += stride
+
+        y += stride
+    # return after loops
+    return tiles, positions
+
+def stitch_tiles(tiles, positions, full_height, full_width, overlap=32):
+    """Reconstruct full image from tiles with overlaps."""
+    margin = overlap // 2
+    output = np.zeros((full_height, full_width), dtype=np.float32)
+    count = np.zeros((full_height, full_width), dtype=np.float32)
+
+    for tile, pos in zip(tiles, positions):
+        y_start, y_end, x_start, x_end = pos
+        y_s = y_start + margin
+        y_e = y_end - margin
+        x_s = x_start + margin
+        x_e = x_end - margin
+
+        output[y_s:y_e, x_s:x_e] += tile[margin:-margin, margin:-margin]
+        count[y_s:y_e, x_s:x_e] += 1
+
+    # Average overlapping regions
+    output = np.where(count > 0, output / count, 0)
+    return output
+
 
