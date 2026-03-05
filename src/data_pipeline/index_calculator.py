@@ -1,5 +1,15 @@
 # NDVI, NDWI, NBR calculators
 import numpy as np
+    
+import rasterio
+import numpy as np
+from pathlib import Path
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import numpy as np
+
+from src.data_pipeline.preprocessor import load_geotiff
+
 
 def compute_ndvi(red_band, nir_band):
     """
@@ -148,3 +158,60 @@ def compute_all_indices(pre_bands, post_bands):
         "delta_nbr":  delta_nbr,
         "delta_ndbi": delta_ndbi,
     }
+    
+
+
+def save_index_as_geotiff(index_array, reference_meta, output_path):
+    """
+    Saves a computed index as a GeoTIFF file.
+    Reuses spatial metadata from the original satellite image
+    so the index map is georeferenced — it knows where on 
+    Earth it is.
+    """
+    
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Build metadata for the output file
+    # Start from reference and update for our single-band float output
+    out_meta = reference_meta.copy()
+    out_meta.update({
+        "driver": "GTiff",      # file format
+        "dtype":  "float32",    # our index values are float
+        "count":  1,            # single band (one index)
+        "compress": "lzw"       # compression — reduces file size ~3x
+    })
+    
+    # Ensure array is float32 and 2D
+    index_array = index_array.astype(np.float32)
+    
+    # Rasterio expects (bands, height, width) shape
+    # Our index is (height, width) — add band dimension
+    if index_array.ndim == 2:
+        index_array = index_array[np.newaxis, :, :]  
+        # Shape becomes (1, height, width)
+    
+    with rasterio.open(output_path, 'w', **out_meta) as dst:
+        dst.write(index_array)
+    
+    print(f"Saved: {output_path} | Shape: {index_array.shape} | "
+          f"Range: [{index_array.min():.3f}, {index_array.max():.3f}]")
+    
+    return output_path
+
+
+
+ndvi, _ = load_geotiff("data/indices/turkey_eq/ndvi_post.tif")
+ndvi_2d = ndvi[0]  # remove band dimension → (H, W)
+
+# Use a diverging colormap: red=low/damaged, green=healthy
+plt.figure(figsize=(12, 8))
+plt.imshow(
+    ndvi_2d,
+    cmap='RdYlGn',       # Red → Yellow → Green
+    vmin=-0.2,
+    vmax=0.8
+)
+plt.colorbar(label='NDVI value')
+plt.title('NDVI Post-Disaster — Turkey Earthquake 2023')
+plt.show()
