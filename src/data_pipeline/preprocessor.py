@@ -188,6 +188,13 @@ def tile_image(array, tile_size=256, overlap=32):
     positions = []
     y = 0
 
+
+def summarize_array(array):
+    """Return a simple text summary of a numpy array for debugging."""
+    import logging
+    logging.debug(f"array shape {array.shape} dtype {array.dtype}")
+    return f"shape={array.shape}, dtype={array.dtype}, min={array.min()}, max={array.max()}"
+
     while y < height:
         y_start = min(y, height - tile_size)
         y_end = y_start + tile_size
