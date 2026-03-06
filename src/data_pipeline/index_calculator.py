@@ -200,6 +200,14 @@ def save_index_as_geotiff(index_array, reference_meta, output_path):
     return output_path
 
 
+# convenience function for manual experimentation
+def print_index_stats(index_dict):
+    """Print min/max values for each computed index."""
+    for name, arr in index_dict.items():
+        print(f"{name}: min={arr.min():.3f}, max={arr.max():.3f}, shape={arr.shape}")
+
+
+
 
 ndvi, _ = load_geotiff("data/indices/turkey_eq/ndvi_post.tif")
 ndvi_2d = ndvi[0]  # remove band dimension → (H, W)
