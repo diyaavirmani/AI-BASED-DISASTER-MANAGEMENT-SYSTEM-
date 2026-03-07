@@ -7,6 +7,8 @@ paths:
   - requirements.txt
   - .env
 
+# Updated config for enhanced processing
+
 sentinel:
   tile_size: 512
   bands:
