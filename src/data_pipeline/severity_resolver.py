@@ -12,19 +12,26 @@ produce a canonical integer score.
 import logging
 
 
-def resolve_severity(reports: list) -> int:
-    """Compute a combined severity score from multiple
-    input reports.  The current implementation is a
-    simple average, but the signature leaves room for
-    more sophisticated logic.
+from typing import Iterable
 
-    Args:
-        reports (list): List of numeric severity values.
 
-    Returns:
-        int: Rounded severity score.
+def resolve_severity(reports: Iterable[float]) -> int:
+    """Compute a combined severity score from multiple input reports.
+
+    The algorithm currently averages the provided values and returns the
+    nearest integer.  Passing an empty iterator results in a score of 0.
+
+    Parameters
+    ----------
+    reports : Iterable[float]
+        Numeric severity values obtained from external sources.
+
+    Returns
+    -------
+    int
+        Rounded severity score.
     """
-    logging.debug(f"Resolving severity for {len(reports)} reports")
+    logging.debug(f"Resolving severity for {len(list(reports))} reports")
     if not reports:
         logging.warning("No reports provided to resolve_severity")
         return 0
