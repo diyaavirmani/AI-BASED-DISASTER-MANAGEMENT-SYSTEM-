@@ -1,2 +1,22 @@
 # docker-compose placeholder
-\n# Added for testing commit history\n
+# Added for testing commit history
+
+version: "3.8"
+services:
+  web:
+    image: python:3.13-slim
+    command: bash -c "uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - ./:/app
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+# You can extend this file with database, celery worker, etc.
