@@ -1,7 +1,10 @@
-# Satellite/ Landsat/ Sentinel API calls
-#fetch sentinal1 and sentinal 2 images
+"""Satellite data fetcher for Landsat and Sentinel imagery.
 
-#import libraries
+This module fetches Sentinel-1 (SAR) and Sentinel-2 (optical) satellite imagery
+using the Sentinel Hub and Sentinelsat APIs. Data is downloaded as GeoTIFF files
+for disaster-affected geographic regions.
+"""
+
 import os
 from sentinelhub.geo_utils import bbox_to_dimensions
 import yaml  # Used to read and parse YAML configuration files
