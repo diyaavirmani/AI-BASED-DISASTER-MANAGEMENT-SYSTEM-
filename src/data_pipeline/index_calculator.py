@@ -1,14 +1,19 @@
-# NDVI, NDWI, NBR calculators
+"""
+Spectral Indices Calculator for Disaster Assessment
+Computes vegetation, water, and built-up indices from satellite bands
+for pre/post-disaster change detection and damage assessment.
+"""
+
 import numpy as np
-    
 import rasterio
-import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import numpy as np
+import logging
 
 from src.data_pipeline.preprocessor import load_geotiff
+
+logger = logging.getLogger(__name__)
 
 
 def compute_ndvi(red_band, nir_band):
@@ -76,6 +81,8 @@ def compute_ndbi(swir_band, nir_band):
     Normalized Difference Built-up Index
     Formula: (SWIR - NIR) / (SWIR + NIR)
     Range: -1 to +1
+    High values = buildings, urban areas
+    Low values = vegetation, water
     """
     swir = swir_band.astype(np.float32)
     nir  = nir_band.astype(np.float32)
@@ -89,6 +96,29 @@ def compute_ndbi(swir_band, nir_band):
     )
     
     return np.clip(ndbi, -1.0, 1.0)
+
+
+def compute_ndi(nir_band, swir_band):
+    """
+    Normalized Difference Index (NIR-SWIR)
+    Formula: (NIR - SWIR) / (NIR + SWIR)
+    Range: -1 to +1
+    Variant of NBR, useful for detecting thermal anomalies and burn scars.
+    High values = water, vegetation
+    Low values = bare soil, urban areas
+    """
+    nir  = nir_band.astype(np.float32)
+    swir = swir_band.astype(np.float32)
+    
+    denominator = nir + swir
+    
+    ndi = np.where(
+        denominator != 0,
+        (nir - swir) / denominator,
+        0.0
+    )
+    
+    return np.clip(ndi, -1.0, 1.0)
 
 def compute_delta_index(pre_index, post_index):
     """
@@ -110,15 +140,15 @@ def compute_all_indices(pre_bands, post_bands):
     """
     Computes all spectral indices for pre and post disaster.
     
-    pre_bands and post_bands are dicts:
-    {
-        'red':   2D numpy array,
-        'nir':   2D numpy array,
-        'green': 2D numpy array,
-        'swir':  2D numpy array
-    }
+    Args:
+        pre_bands: Dict with keys 'red', 'nir', 'green', 'swir' (2D numpy arrays)
+        post_bands: Dict with keys 'red', 'nir', 'green', 'swir' (2D numpy arrays)
     
-    Returns a dict of all computed index arrays.
+    Returns:
+        Dict of all computed index arrays and their delta (change) values.
+        Delta indices highlight areas affected by disaster:
+        - Negative delta = loss (vegetation destroyed, water drained)
+        - Positive delta = gain (new bare soil, new flooding)
     """
     
     # ── Pre-disaster indices ─────────────────────────────
@@ -126,18 +156,23 @@ def compute_all_indices(pre_bands, post_bands):
     ndwi_pre = compute_ndwi(pre_bands['green'], pre_bands['nir'])
     nbr_pre  = compute_nbr( pre_bands['nir'],   pre_bands['swir'])
     ndbi_pre = compute_ndbi(pre_bands['swir'],  pre_bands['nir'])
+    ndi_pre  = compute_ndi( pre_bands['nir'],   pre_bands['swir'])
     
     # ── Post-disaster indices ────────────────────────────
     ndvi_post = compute_ndvi(post_bands['red'],   post_bands['nir'])
     ndwi_post = compute_ndwi(post_bands['green'], post_bands['nir'])
     nbr_post  = compute_nbr( post_bands['nir'],   post_bands['swir'])
     ndbi_post = compute_ndbi(post_bands['swir'],  post_bands['nir'])
+    ndi_post  = compute_ndi( post_bands['nir'],   post_bands['swir'])
     
     # ── Delta indices (change = post minus pre) ──────────
     delta_ndvi = compute_delta_index(ndvi_pre, ndvi_post)
     delta_ndwi = compute_delta_index(ndwi_pre, ndwi_post)
     delta_nbr  = compute_delta_index(nbr_pre,  nbr_post)
     delta_ndbi = compute_delta_index(ndbi_pre, ndbi_post)
+    delta_ndi  = compute_delta_index(ndi_pre,  ndi_post)
+    
+    logger.info("Computed all spectral indices successfully")
     
     return {
         # Pre-disaster state
@@ -145,18 +180,21 @@ def compute_all_indices(pre_bands, post_bands):
         "ndwi_pre":   ndwi_pre,
         "nbr_pre":    nbr_pre,
         "ndbi_pre":   ndbi_pre,
+        "ndi_pre":    ndi_pre,
         
         # Post-disaster state
         "ndvi_post":  ndvi_post,
         "ndwi_post":  ndwi_post,
         "nbr_post":   nbr_post,
         "ndbi_post":  ndbi_post,
+        "ndi_post":   ndi_post,
         
         # Change signals (most important for model)
         "delta_ndvi": delta_ndvi,
         "delta_ndwi": delta_ndwi,
         "delta_nbr":  delta_nbr,
         "delta_ndbi": delta_ndbi,
+        "delta_ndi":  delta_ndi,
     }
     
 
@@ -207,19 +245,130 @@ def print_index_stats(index_dict):
         print(f"{name}: min={arr.min():.3f}, max={arr.max():.3f}, shape={arr.shape}")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST: Visualize NDVI map over vegetated area
+# Green forests = bright (high NDVI ~0.7), roads/buildings = dark (~negative)
+# This visual check confirms the formula is correct
+# ═══════════════════════════════════════════════════════════════════════════
 
-
-ndvi, _ = load_geotiff("data/indices/turkey_eq/ndvi_post.tif")
-ndvi_2d = ndvi[0]  # remove band dimension → (H, W)
-
-# Use a diverging colormap: red=low/damaged, green=healthy
-plt.figure(figsize=(12, 8))
-plt.imshow(
-    ndvi_2d,
-    cmap='RdYlGn',       # Red → Yellow → Green
-    vmin=-0.2,
-    vmax=0.8
-)
-plt.colorbar(label='NDVI value')
-plt.title('NDVI Post-Disaster — Turkey Earthquake 2023')
-plt.show()
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    
+    try:
+        print("=" * 80)
+        print("TEST: NDVI Visualization - Spectral Index Formula Validation")
+        print("=" * 80)
+        
+        # Load the post-disaster NDVI map
+        ndvi_data, ndvi_meta = load_geotiff("data/indices/turkey_eq/ndvi_post.tif")
+        ndvi_2d = ndvi_data[0]  # remove band dimension → (H, W)
+        
+        print(f"\nNDVI Map Statistics:")
+        print(f"  Shape: {ndvi_2d.shape}")
+        print(f"  Min value:  {ndvi_2d.min():.3f}")
+        print(f"  Max value:  {ndvi_2d.max():.3f}")
+        print(f"  Mean value: {ndvi_2d.mean():.3f}")
+        print(f"  Std dev:    {ndvi_2d.std():.3f}")
+        
+        # ─ Visual check 1: Full NDVI map
+        print("\n[1/3] Plotting full NDVI map...")
+        fig, ax = plt.subplots(figsize=(14, 10))
+        
+        # Use diverging colormap: Red=low/damaged, Green=high/healthy vegetation
+        im = ax.imshow(
+            ndvi_2d,
+            cmap='RdYlGn',       # Red → Yellow → Green
+            vmin=-0.2,
+            vmax=0.8
+        )
+        
+        cbar = plt.colorbar(im, ax=ax, label='NDVI value', fraction=0.046, pad=0.04)
+        ax.set_title('NDVI Post-Disaster — Turkey Earthquake 2023\n'
+                     'Green=Vegetation, Red=Built-up/Bare, Yellow=Transition',
+                     fontsize=14, fontweight='bold')
+        ax.set_xlabel('Column (pixels)')
+        ax.set_ylabel('Row (pixels)')
+        
+        # Add grid for reference
+        ax.grid(True, alpha=0.2, linestyle='--')
+        
+        plt.tight_layout()
+        plt.savefig('data/processed/indices/ndvi_post_visualization.png', dpi=150)
+        print("  ✓ Saved: data/processed/indices/ndvi_post_visualization.png")
+        plt.show()
+        
+        # ─ Visual check 2: Histogram of values
+        print("\n[2/3] Plotting NDVI histogram...")
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Flatten and plot histogram
+        ndvi_flat = ndvi_2d.flatten()
+        ax.hist(ndvi_flat, bins=100, color='green', alpha=0.7, edgecolor='black')
+        ax.axvline(ndvi_2d.mean(), color='red', linestyle='--', linewidth=2, 
+                   label=f'Mean: {ndvi_2d.mean():.3f}')
+        ax.set_xlabel('NDVI Value')
+        ax.set_ylabel('Pixel Count')
+        ax.set_title('Distribution of NDVI Values\n'
+                     'Healthy vegetation: 0.5-0.8 | Sparse vegetation: 0.2-0.5 | '
+                     'Built-up: -0.2-0.0',
+                     fontsize=12, fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('data/processed/indices/ndvi_histogram.png', dpi=150)
+        print("  ✓ Saved: data/processed/indices/ndvi_histogram.png")
+        plt.show()
+        
+        # ─ Visual check 3: Zoomed view of vegetated area
+        print("\n[3/3] Plotting zoomed urban vs vegetation comparison...")
+        
+        h, w = ndvi_2d.shape
+        h_quarter, w_quarter = h // 4, w // 4
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # Left: Likely vegetated area (assume top-left is greener)
+        veg_crop = ndvi_2d[:h_quarter, :w_quarter]
+        im1 = axes[0].imshow(veg_crop, cmap='RdYlGn', vmin=-0.2, vmax=0.8)
+        axes[0].set_title(f'Vegetated Area Sample\nMean NDVI: {veg_crop.mean():.3f}',
+                         fontsize=12, fontweight='bold')
+        axes[0].set_xlabel('Column (pixels)')
+        axes[0].set_ylabel('Row (pixels)')
+        plt.colorbar(im1, ax=axes[0], label='NDVI')
+        
+        # Right: Likely built-up area (assume bottom-right is darker)
+        urban_crop = ndvi_2d[3*h_quarter:, 3*w_quarter:]
+        im2 = axes[1].imshow(urban_crop, cmap='RdYlGn', vmin=-0.2, vmax=0.8)
+        axes[1].set_title(f'Urban/Built-up Area Sample\nMean NDVI: {urban_crop.mean():.3f}',
+                         fontsize=12, fontweight='bold')
+        axes[1].set_xlabel('Column (pixels)')
+        axes[1].set_ylabel('Row (pixels)')
+        plt.colorbar(im2, ax=axes[1], label='NDVI')
+        
+        plt.tight_layout()
+        plt.savefig('data/processed/indices/ndvi_comparison.png', dpi=150)
+        print("  ✓ Saved: data/processed/indices/ndvi_comparison.png")
+        plt.show()
+        
+        # ─ Formula validation
+        print("\n" + "=" * 80)
+        print("FORMULA VALIDATION")
+        print("=" * 80)
+        print("\n✓ NDVI Formula Check:")
+        print("  - High values (0.5-0.8): Dense green vegetation (FORESTS, AGRICULTURE)")
+        print("  - Medium values (0.2-0.5): Sparse vegetation, grassland")
+        print("  - Low/negative values (-0.2-0.0): Built-up areas, roads, bare soil, water")
+        print("  - Your results: ", end="")
+        
+        if veg_crop.mean() > 0.3 and urban_crop.mean() < 0.2:
+            print("✓ CORRECT! Vegetation is bright, urban is dark")
+        else:
+            print("⚠ Check if band selection or formula needs adjustment")
+        
+        print("\n" + "=" * 80)
+        
+    except Exception as e:
+        print(f"\n✗ Error running TEST: {str(e)}")
+        import traceback
+        traceback.print_exc()
