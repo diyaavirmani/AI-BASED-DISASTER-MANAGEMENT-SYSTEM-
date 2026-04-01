@@ -1,42 +1,93 @@
-"""Main FastAPI application entry point.
+from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+import torch
+import yaml
 
-This module initializes the FastAPI app and provides basic endpoints for
-status monitoring and health checks. Additional routers are mounted in the
-routes/ directory for API functionality.
-"""
+from src.models.unet import DamageSegmentationModel
 
-from fastapi import FastAPI
-import logging
-from typing import Dict
+# Routers
+from src.api.routes import disasters, resources, predict
 
-app = FastAPI(
-    title="Disaster Management API",
-    description="API for disaster response and resource allocation using AI",
-    version="0.1.0"
+
+# --------------------------------------------------
+# 154. CREATE APP + CORS
+# --------------------------------------------------
+app = FastAPI(title="DisasterAI API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
-@app.get("/", response_model=Dict[str, str])
-async def root() -> Dict[str, str]:
-    """Simple root endpoint for quick status checks.
-
-    Returns
-    -------
-    Dict[str, str]
-        A dictionary with a single 'status' key set to 'ok'.
-    """
-    logging.debug("root endpoint called")
-    return {"status": "ok"}
+# --------------------------------------------------
+# LOAD CONFIG
+# --------------------------------------------------
+with open("configs/config.yaml", "r") as f:
+    config = yaml.safe_load(f)
 
 
-@app.get("/health", response_model=Dict[str, str])
-async def health_check() -> Dict[str, str]:
-    """Health check endpoint for deployment automation.
+# --------------------------------------------------
+# 155. STARTUP EVENT (LOAD MODEL)
+# --------------------------------------------------
+@app.on_event("startup")
+def load_model():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    Returns
-    -------
-    Dict[str, str]
-        A dictionary with 'health' = 'green'.
-    """
-    logging.debug("health check invoked")
-    return {"health": "green"}
+    model = DamageSegmentationModel(config)
+    checkpoint_path = config["training"]["checkpoint_path"]
+
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.to(device)
+        model.eval()
+
+        app.state.model = model
+        app.state.device = device
+        print("✅ Model loaded successfully")
+
+    except Exception as e:
+        app.state.model = None
+        print(f"❌ Model loading failed: {e}")
+
+
+# --------------------------------------------------
+# 156. INCLUDE ROUTERS
+# --------------------------------------------------
+app.include_router(disasters.router, prefix="/api/disasters", tags=["Disasters"])
+app.include_router(resources.router, prefix="/api/resources", tags=["Resources"])
+app.include_router(predict.router, prefix="/api/predict", tags=["Prediction"])
+
+
+# --------------------------------------------------
+# 157. HEALTH CHECK
+# --------------------------------------------------
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "model_loaded": app.state.model is not None
+    }
+
+
+# --------------------------------------------------
+# 158. WEBSOCKET (REAL-TIME UPDATES)
+# --------------------------------------------------
+@app.websocket("/ws/updates")
+async def websocket_updates(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        while True:
+            # For now, dummy updates (replace with real data later)
+            await websocket.send_json({
+                "message": "Live update from DisasterAI",
+                "status": "running"
+            })
+
+    except Exception:
+        await websocket.close()
