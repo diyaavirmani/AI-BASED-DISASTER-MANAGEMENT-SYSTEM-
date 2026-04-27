@@ -8,9 +8,9 @@ def load_config(config_path="configs/config.yaml"):
     with open(config_path) as f:
         return yaml.safe_load(f)
 
-class damagesegmentationmodel(nn.Module):
+class DamageSegmentationModel(nn.Module):
     def __init__(self,config):
-        super(damagesegmentationmodel,self).__init__()
+        super(DamageSegmentationModel,self).__init__()
 
         #creating a unet model 
         self.model=smp.Unet(
@@ -23,7 +23,7 @@ class damagesegmentationmodel(nn.Module):
     def forward(self,x):
         return self.model(x)  
 def get_model(config):
-    return damagesegmentationmodel(config)
+    return DamageSegmentationModel(config)
 
 def load_trained_model(checkpoint_path, config, device="cpu"):
     model = get_model(config)
