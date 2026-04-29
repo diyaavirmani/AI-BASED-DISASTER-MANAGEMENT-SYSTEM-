@@ -4,6 +4,7 @@ import mlflow
 
 from src.data_pipeline.dataset_builder import build_dataloaders
 from src.models.unet import DamageSegmentationModel
+from src.models.hrnet import HRNetSegmentationModel
 from src.training.losses import CombinedLoss
 from src.training.metrics import compute_all_metrics
 
@@ -103,7 +104,12 @@ def train(config):
     train_loader, val_loader = build_dataloaders(config)
 
     # MODEL
-    model = DamageSegmentationModel(config).to(device)
+    if config["model"]["model_architecture"] == "unet":
+        model = DamageSegmentationModel(config).to(device)
+    elif config["model"]["model_architecture"] == "hrnet":
+        model = HRNetSegmentationModel(config).to(device)
+    else:
+        raise ValueError(f"Unknown model architecture: {config['model']['model_architecture']}")
 
     # LOSS
     loss_fn = CombinedLoss()
@@ -115,10 +121,8 @@ def train(config):
     )
 
     # SCHEDULER
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer,
-        step_size=config["training"]["step_size"],
-        gamma=config["training"]["gamma"]
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=config["training"]["gamma"], patience=5
     )
 
     # EARLY STOPPING
@@ -167,7 +171,7 @@ def train(config):
             print("⛔ Early stopping triggered")
             break
 
-        scheduler.step()
+        scheduler.step(val_iou)
 
     mlflow.end_run()
 
