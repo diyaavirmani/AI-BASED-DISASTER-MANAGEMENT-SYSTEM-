@@ -10,6 +10,16 @@ The project operates in two modes simultaneously-
 :-After a disaster, real satellite images are fetched from Planet Insights Platform and Google Earth Engine, processed into a standardised 9-channel input (optical + SAR radar + spectral indices + coherence), and pushed through a trained U-Net or HRNet segmentation model that labels every pixel as no damage, minor, major, or destroyed. The results are rendered as live GeoJSON polygons on a Mapbox dashboard, and a resource allocation engine uses Dijkstra's algorithm with priority scoring to recommend exactly which rescue teams go where.
 
 
+### The BRIGHT Dataset
+
+DisasterAI is trained and evaluated on **BRIGHT** (Building damage classification and change detection dataset in multimodal satellite Imagery). 
+
+BRIGHT is the first open-access, globally distributed, event-diverse multimodal dataset specifically curated to support AI-based disaster response. It covers five types of natural disasters and two types of man-made disasters across 14 disaster events in 23 regions worldwide, with a particular focus on developing countries.
+
+It supports not only the development of supervised deep models, but also the testing of their performance on cross-event transfer setup, as well as unsupervised domain adaptation, semi-supervised learning, unsupervised change detection, and unsupervised image matching methods in multimodal and disaster scenarios.
+
+![BRIGHT Dataset Overview](docs/images/bright_dataset.png)
+
 ---
 
 ## 2. Architecture 
@@ -24,6 +34,8 @@ Three layers stacked on top of each other:
 *   **AI/ML Layer** — U-Net (ResNet50 encoder) and HRNet (W32) both solve the same task — per-pixel damage classification. The LSTM zone predictor operates on time-series weather and seismic data to predict risk before satellite images even exist. A 5-layer severity resolver fuses satellite model output, GDACS alerts, CLIP image analysis, and NLP keywords to produce a single authoritative severity score.
 *   **Decision Layer** — FastAPI serves all model outputs via REST, WebSocket, and Server-Sent Events (SSE). A resource allocation engine takes the damage map, road network, available resources, and population density and produces a ranked deployment list with routes. The React dashboard renders everything on a live Mapbox map.
 
+![Architecture Diagram](docs/images/architecture.png)
+
 ---
 
 ## 3. How It Works 
@@ -31,7 +43,9 @@ Three layers stacked on top of each other:
 Two parallel pipelines run:
 
 *   **Pre-disaster (LSTM path):** The LSTM processes 30-day sequences of 22 features per zone and outputs a risk score 0–1. Zones above 0.7 are flagged on the dashboard as HIGH risk so emergency authorities can pre-position resources.
-*   **Post-disaster (U-Net/HRNet path):** When a disaster event is detected (GDACS alert or manual trigger), the system fetches before and after satellite images for the bounding box. The preprocessor aligns images to the same coordinate system, tiles them into 256×256 patches with 32px overlap, and stacks them into 9-channel tensors. The trained segmentation model classifies each tile in the background using FastAPI **BackgroundTasks**. Tiles are stitched back into a full damage map and converted to GeoJSON polygons stored in **SQLite**. The resource allocator scores each damaged zone by severity × population × road accessibility × time urgency, sorts them, assigns nearest available resources, and finds the optimal route using Dijkstra on the OpenStreetMap road graph.
+*   **Post-disaster (U-Net path):** When a disaster event is detected (GDACS alert or manual trigger), the system fetches before and after satellite images for the bounding box. The preprocessor aligns images to the same coordinate system, tiles them into 256×256 patches with 32px overlap, and stacks them into 9-channel tensors. The trained segmentation model classifies each tile in the background using FastAPI **BackgroundTasks**. Tiles are stitched back into a full damage map and converted to GeoJSON polygons stored in **SQLite**. The resource allocator scores each damaged zone by severity × population × road accessibility × time urgency, sorts them, assigns nearest available resources, and finds the optimal route using Dijkstra on the OpenStreetMap road graph.
+
+![How It Works Diagram](docs/images/how_it_works.png)
 
 ---
 
@@ -40,7 +54,7 @@ Two parallel pipelines run:
 | Function | Detail |
 |---|---|
 | **Pre-disaster risk prediction** | LSTM flags high-risk zones hours or days before an event using weather and seismic signals |
-| **Satellite damage classification** | U-Net / HRNet labels every pixel in post-disaster satellite imagery as one of 4 damage levels |
+| **Satellite damage classification** | U-Net labels every pixel in post-disaster satellite imagery as one of 4 damage levels |
 | **Multimodal fusion** | Combines SAR radar + optical + thermal so the system works at night and through cloud cover |
 | **Social media signal extraction** | Filters and geocodes crowdsource posts, extracts visual severity from attached images using CLIP |
 | **Severity resolution** | Merges 5 data sources into one authoritative severity score per zone |
@@ -96,7 +110,7 @@ disaster-ai-system/
 │   │   ├── augmentation.py           # Satellite-specific augmentation
 │   │   ├── losses.py                 # Dice + CrossEntropy combined
 │   │   ├── metrics.py                # IoU, F1, pixel accuracy
-│   │   ├── train_damage.py           # U-Net / HRNet training loop
+│   │   ├── train_damage.py           # U-Net training loop
 │   │   ├── train_zone.py             # LSTM training loop
 │   │   └── evaluate.py               # Test set evaluation + reports
 │   │
