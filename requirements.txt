@@ -1,51 +1,38 @@
-# requirements.txt - Core packages
-# Deep learning
+# Core Deep Learning
 torch
 torchvision
 torchaudio
+segmentation-models-pytorch>=0.3.3
+timm>=0.9.0
+einops>=0.7.0
+onnxruntime>=1.16.0
 
-# Alternative DL framework
-tensorflow
-keras
-
-# Geospatial processing
-rasterio
-# gdal  # requires system dependencies, install via conda or separately
+# Geospatial Processing
+rasterio>=1.3.0
 geopandas
 shapely
-
-# Satellite data APIs
 sentinelhub
 earthengine-api
 
-# Image processing + ML
-opencv-python
-scikit-learn
+# Image Processing + Math
+opencv-python>=4.8.0
+scipy>=1.11.0
 numpy
+scikit-learn
 
-# Backend + async tasks
+# Web Framework & Database
 fastapi
 uvicorn
-celery
-redis
-
-# Database
-psycopg2
 sqlalchemy
-postgis
 
-# SAM model
-transformers
-# torch-segment-anything  # not available on PyPI, install manually or remove
-
-# Crowdsource data
+# Social/Crowdsourcing
 tweepy
 requests
 beautifulsoup4
 
-# Visualization
-leaflet
+# Visualization / CLI Tools
 folium
 plotly
 streamlit
-\n# added for commit history\n
+pyyaml
+python-dotenv

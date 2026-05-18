@@ -204,6 +204,14 @@ dm/
 .cursorignore
 .cursorindexingignore
 
+# Node dependencies
+node_modules/
+frontend/node_modules/
+
+# Local databases
+*.db
+*.db-journal
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
