@@ -1,0 +1,4 @@
+# Place trained model checkpoints here:
+# - UNet_ResNet50_best.pth
+# - HRNet_W32_best.pth
+# - active_model.pth (copy of the winning model)
