@@ -1,154 +1,148 @@
-from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, ForeignKey, Boolean, JSON
-)
-from sqlalchemy.orm import relationship
-from geoalchemy2 import Geometry
-from datetime import datetime
+# src/database/models.py — SIMPLIFIED VERSION
 
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, JSON, ForeignKey
+from sqlalchemy.orm import relationship
+from datetime import datetime
 from src.database.connection import Base
 
 
-# --------------------------------------------------
-# 147. DISASTER EVENT
-# --------------------------------------------------
 class DisasterEvent(Base):
     __tablename__ = "disaster_events"
 
-    id = Column(Integer, primary_key=True, index=True)
-    event_type = Column(String, nullable=False)
-    name = Column(String, nullable=False)
+    id          = Column(Integer, primary_key=True, index=True)
+    event_type  = Column(String, nullable=False)   # earthquake, flood, fire
+    name        = Column(String, nullable=False)
+    status      = Column(String, default="active") # active, resolved, pending
+    magnitude   = Column(Float, nullable=True)
+    start_time  = Column(DateTime, default=datetime.utcnow)
+    end_time    = Column(DateTime, nullable=True)
+    source      = Column(String, nullable=True)    # gdacs, manual
+    
+    # Bounding box as simple floats instead of PostGIS polygon
+    bbox_min_lat = Column(Float, nullable=True)
+    bbox_min_lon = Column(Float, nullable=True)
+    bbox_max_lat = Column(Float, nullable=True)
+    bbox_max_lon = Column(Float, nullable=True)
 
-    start_time = Column(DateTime, nullable=False)
-    end_time = Column(DateTime)
-
-    magnitude = Column(Float)
-    affected_area_km2 = Column(Float)
-
-    status = Column(String)
-    source = Column(String)
-    gdacs_alert_score = Column(Float)
+    gdacs_alert_score = Column(Float, nullable=True)
+    affected_area_km2 = Column(Float, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    damage_assessments = relationship("DamageAssessment", back_populates="event")
-    resources = relationship("ResourceDeployment", back_populates="event")
-    reports = relationship("CrowdsourceReport", back_populates="event")
-    satellite_images = relationship("SatelliteImage", back_populates="event")
+    damage_assessments = relationship("DamageAssessment", back_populates="event", cascade="all, delete-orphan")
+    resources          = relationship("ResourceDeployment", back_populates="event", cascade="all, delete-orphan")
+    reports            = relationship("CrowdsourceReport", back_populates="event", cascade="all, delete-orphan")
+    satellite_images   = relationship("SatelliteImage", back_populates="event", cascade="all, delete-orphan")
 
 
-# --------------------------------------------------
-# 148. DAMAGE ASSESSMENT
-# --------------------------------------------------
 class DamageAssessment(Base):
     __tablename__ = "damage_assessments"
 
-    id = Column(Integer, primary_key=True, index=True)
-    event_id = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
+    id           = Column(Integer, primary_key=True, index=True)
+    event_id     = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
+    assessed_at  = Column(DateTime, default=datetime.utcnow)
+    
+    # support both confidence and confidence_score for full API compatibility
+    confidence       = Column(Float, nullable=True)
+    confidence_score = Column(Float, nullable=True)
 
-    assessed_at = Column(DateTime, default=datetime.utcnow)
-    confidence_score = Column(Float)
+    damage_level = Column(Integer, nullable=False)  # 0=no_damage, 1=minor, 2=major, 3=destroyed
 
-    damage_zone = Column(Geometry("POLYGON"))  # PostGIS
-    damage_level = Column(Integer)  # 0–3
+    # Store damage zones as GeoJSON string instead of PostGIS geometry
+    damage_zones_geojson = Column(Text, nullable=True)
 
-    affected_population_estimate = Column(Integer)
+    # Summary stats
+    total_pixels_assessed = Column(Integer, nullable=True)
+    pct_no_damage         = Column(Float, nullable=True)
+    pct_minor             = Column(Float, nullable=True)
+    pct_major             = Column(Float, nullable=True)
+    pct_destroyed         = Column(Float, nullable=True)
+    affected_population_estimate = Column(Integer, nullable=True)
 
-    # Relationships
+    # Property to dynamically convert geometry if any client expects it
+    @property
+    def damage_zone(self):
+        return None
+
     event = relationship("DisasterEvent", back_populates="damage_assessments")
 
 
-# --------------------------------------------------
-# 149. RESOURCE
-# --------------------------------------------------
 class Resource(Base):
     __tablename__ = "resources"
 
-    id = Column(Integer, primary_key=True, index=True)
-    resource_type = Column(String, nullable=False)
-    quantity = Column(Integer)
+    id            = Column(Integer, primary_key=True, index=True)
+    resource_type = Column(String, nullable=False)  # medical, food, rescue
+    quantity      = Column(Integer, default=1)
+    status        = Column(String, default="available")  # available, deployed, exhausted
+    latitude      = Column(Float, nullable=True)
+    longitude     = Column(Float, nullable=True)
+    last_updated  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    location = Column(Geometry("POINT"))  # PostGIS
-    status = Column(String)
-
-    last_updated = Column(DateTime, default=datetime.utcnow)
-
-    # Relationships
-    deployments = relationship("ResourceDeployment", back_populates="resource")
+    deployments = relationship("ResourceDeployment", back_populates="resource", cascade="all, delete-orphan")
 
 
-# --------------------------------------------------
-# 150. RESOURCE DEPLOYMENT
-# --------------------------------------------------
 class ResourceDeployment(Base):
     __tablename__ = "resource_deployments"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id                 = Column(Integer, primary_key=True, index=True)
+    resource_id        = Column(Integer, ForeignKey("resources.id"), nullable=False)
+    event_id           = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
+    
+    # Support both zone_id and target_zone_id for routing/deployments compatibility
+    zone_id            = Column(Integer, ForeignKey("damage_assessments.id"), nullable=True)
+    target_zone_id     = Column(Integer, ForeignKey("damage_assessments.id"), nullable=True)
 
-    resource_id = Column(Integer, ForeignKey("resources.id"), nullable=False)
-    event_id = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
-    target_zone_id = Column(Integer, ForeignKey("damage_assessments.id"))
+    deployed_at        = Column(DateTime, default=datetime.utcnow)
+    completed_at       = Column(DateTime, nullable=True)
+    quantity_deployed  = Column(Integer)
+    status             = Column(String, default="en_route")  # en_route, arrived, completed
+    estimated_arrival  = Column(DateTime, nullable=True)
+    route_geojson      = Column(Text, nullable=True)
 
-    deployed_at = Column(DateTime, default=datetime.utcnow)
-    quantity_deployed = Column(Integer)
-
-    estimated_arrival = Column(DateTime)
-    route = Column(Geometry("LINESTRING"))  # PostGIS
-
-    # Relationships
     resource = relationship("Resource", back_populates="deployments")
-    event = relationship("DisasterEvent", back_populates="resources")
+    event    = relationship("DisasterEvent", back_populates="resources")
 
 
-# --------------------------------------------------
-# 151. CROWDSOURCE REPORT
-# --------------------------------------------------
 class CrowdsourceReport(Base):
     __tablename__ = "crowdsource_reports"
 
-    id = Column(Integer, primary_key=True, index=True)
-
-    event_id = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
-
-    source = Column(String)
-    text = Column(String)
-
-    location = Column(Geometry("POINT"))  # PostGIS
-    reported_at = Column(DateTime, default=datetime.utcnow)
-
-    disaster_type = Column(String)
-
-    severity_score = Column(Float)
-    severity_source = Column(String)
-    severity_label = Column(String)
+    id             = Column(Integer, primary_key=True, index=True)
+    event_id       = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
+    source         = Column(String)       # twitter, reddit, gdacs
+    text           = Column(Text)
+    reported_at    = Column(DateTime, default=datetime.utcnow)
+    
+    disaster_type  = Column(String, nullable=True)
+    severity_score = Column(Float, nullable=True)
+    severity_source = Column(String, nullable=True)
+    severity_label = Column(String, nullable=True)
     severity_resolved = Column(Boolean, default=False)
+    
+    verified       = Column(Boolean, default=False)
+    latitude       = Column(Float, nullable=True)
+    longitude      = Column(Float, nullable=True)
+    image_analysis = Column(JSON, nullable=True)
 
-    image_analysis = Column(JSON)
-
-    location_source = Column(String)
-    verified = Column(Boolean, default=False)
-
-    # Relationships
     event = relationship("DisasterEvent", back_populates="reports")
 
 
-# --------------------------------------------------
-# 152. SATELLITE IMAGE
-# --------------------------------------------------
 class SatelliteImage(Base):
     __tablename__ = "satellite_images"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id                  = Column(Integer, primary_key=True, index=True)
+    event_id            = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
+    image_type          = Column(String, nullable=True)
+    captured_at         = Column(DateTime, nullable=True)
+    processed_at        = Column(DateTime, nullable=True)
+    file_path           = Column(String, nullable=True)
+    
+    bbox_min_lat        = Column(Float, nullable=True)
+    bbox_min_lon        = Column(Float, nullable=True)
+    bbox_max_lat        = Column(Float, nullable=True)
+    bbox_max_lon        = Column(Float, nullable=True)
+    
+    cloud_cover_percent = Column(Float, nullable=True)
 
-    event_id = Column(Integer, ForeignKey("disaster_events.id"), nullable=False)
-
-    image_type = Column(String)
-
-    captured_at = Column(DateTime)
-    processed_at = Column(DateTime)
-
-    file_path = Column(String)
-
-    bounding_box = Column(Geometry("POLYGON"))  # PostGIS
-    cloud_cover_percent = Column(Float)
-
-    # Relationships
     event = relationship("DisasterEvent", back_populates="satellite_images")
