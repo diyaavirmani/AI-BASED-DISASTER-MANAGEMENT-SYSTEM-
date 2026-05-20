@@ -7,14 +7,23 @@ class HRNetSegmentationModel(nn.Module):
     def __init__(self, config):
         super(HRNetSegmentationModel, self).__init__()
 
-        # Creating an HRNet model using SMP
-        hrnet_width = config.get("hrnet_width", 32)
+        # Try to resolve parameters dynamically from config
+        if "model" in config:
+            in_channels = config["model"].get("in_channels", 9)
+            hrnet_width = config["model"].get("hrnet_width", 32)
+            encoder_weights = config["model"].get("encoder_weights", "imagenet")
+        else:
+            in_channels = config.get("in_channels", 9)
+            hrnet_width = config.get("hrnet_width", 32)
+            encoder_weights = config.get("encoder_weights", "imagenet")
+
         encoder_name = f"tu-hrnet_w{hrnet_width}"
 
+        # Creating an HRNet model using SMP
         self.model = smp.Unet(
             encoder_name=encoder_name,
-            encoder_weights=config.get("encoder_weights", "imagenet"),
-            in_channels=22,
+            encoder_weights=encoder_weights,
+            in_channels=in_channels,
             classes=4,
             activation=None
         )
@@ -37,24 +46,24 @@ def compare_models(config):
     unet_model = smp.Unet(
         encoder_name="resnet50",
         encoder_weights="imagenet",
-        in_channels=22,
+        in_channels=9,
         classes=4,
         activation=None
     )
 
     # Instantiate HRNet
-    hrnet_width = config.get("hrnet_width", 32)
+    hrnet_width = config.get("model", config).get("hrnet_width", 32)
     encoder_name = f"tu-hrnet_w{hrnet_width}"
     hrnet_model = smp.Unet(
         encoder_name=encoder_name,
         encoder_weights="imagenet",
-        in_channels=22,
+        in_channels=9,
         classes=4,
         activation=None
     )
 
     # Dummy input
-    x = torch.randn(2, 22, 256, 256)
+    x = torch.randn(2, 9, 256, 256)
 
     # Forward pass
     with torch.no_grad():
@@ -70,36 +79,13 @@ def compare_models(config):
     print(f"U-Net output shape: {unet_output.shape}")
     print(f"HRNet output shape: {hrnet_output.shape}")
 
-    # Memory usage if GPU
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
-        unet_model.cuda()
-        x_cuda = x.cuda()
-        with torch.no_grad():
-            _ = unet_model(x_cuda)
-        unet_mem = torch.cuda.max_memory_allocated()
-        
-        torch.cuda.reset_peak_memory_stats()
-        hrnet_model.cuda()
-        with torch.no_grad():
-            _ = hrnet_model(x_cuda)
-        hrnet_mem = torch.cuda.max_memory_allocated()
-        
-        print(f"U-Net peak memory: {unet_mem / 1024**2:.2f} MB")
-        print(f"HRNet peak memory: {hrnet_mem / 1024**2:.2f} MB")
-
 # TEST
 if __name__ == "__main__":
     config = {
-        "hrnet_width": 32,
-        "encoder_weights": "imagenet"
+        "model": {
+            "hrnet_width": 32,
+            "encoder_weights": "imagenet",
+            "in_channels": 9
+        }
     }
     compare_models(config)
-
-    Returns
-    -------
-    np.ndarray
-        Segmentation output of shape (batch, num_classes, height, width).
-    """
-    logger.debug("Forward pass through HRNet")
-    return x
