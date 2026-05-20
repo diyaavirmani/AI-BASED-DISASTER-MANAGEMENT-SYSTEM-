@@ -9,19 +9,31 @@ def load_config(config_path="configs/config.yaml"):
         return yaml.safe_load(f)
 
 class DamageSegmentationModel(nn.Module):
-    def __init__(self,config):
-        super(DamageSegmentationModel,self).__init__()
+    def __init__(self, config):
+        super(DamageSegmentationModel, self).__init__()
 
-        #creating a unet model 
-        self.model=smp.Unet(
-            encoder_name=config["encoder_name"],
-            encoder_weights=config.get("encoder_weights","imagenet"),
-            in_channels=22,
+        # Try to resolve in_channels dynamically from config
+        if "model" in config:
+            in_channels = config["model"].get("in_channels", 9)
+            encoder_name = config["model"].get("encoder_name", "resnet50")
+            encoder_weights = config["model"].get("encoder_weights", "imagenet")
+        else:
+            in_channels = config.get("in_channels", 9)
+            encoder_name = config.get("encoder_name", "resnet50")
+            encoder_weights = config.get("encoder_weights", "imagenet")
+
+        # Creating U-Net model
+        self.model = smp.Unet(
+            encoder_name=encoder_name,
+            encoder_weights=encoder_weights,
+            in_channels=in_channels,
             classes=4,
             activation=None            
         )
-    def forward(self,x):
+
+    def forward(self, x):
         return self.model(x)  
+
 def get_model(config):
     return DamageSegmentationModel(config)
 
@@ -32,17 +44,20 @@ def load_trained_model(checkpoint_path, config, device="cpu"):
     model.eval()
     return model      
 
-# 130. TEST
+# TEST
 if __name__ == "__main__":
     config = {
-        "encoder_name": "resnet34",
-        "encoder_weights": "imagenet"
+        "model": {
+            "encoder_name": "resnet34",
+            "encoder_weights": "imagenet",
+            "in_channels": 9
+        }
     }
 
     model = get_model(config)
 
-    # Random input tensor
-    x = torch.randn(2, 22, 256, 256)
+    # Random input tensor (batch, channels, height, width)
+    x = torch.randn(2, 9, 256, 256)
 
     # Forward pass
     output = model(x)
