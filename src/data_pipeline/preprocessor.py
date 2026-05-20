@@ -1,381 +1,189 @@
-# CCD, alignment, correction
-#align correct and tile satellite images
-#this file read the raw data that we fetched from 
+# src/data_pipeline/preprocessor.py
+# KEY SECTION — the preprocess_for_inference() function
+# This is what runs on LIVE satellite images from Planet/GEE
 
-"""
- a normal image is pixels. A satellite image is also pixels — but it also knows where on Earth each pixel is. Rasterio is the library that reads these special images
-    
-    
-    """
-
-import rasterio
 import numpy as np
-from pathlib import Path
-from rasterio.warp import calculate_default_transform, reproject, Resampling
+import rasterio
+import cv2
 from scipy.ndimage import uniform_filter
-import yaml
-from src.data_pipeline.index_calculator import compute_all_indices
+from pathlib import Path
 
-def load_geotiff(filepath):
-    with rasterio.open(filepath) as dataset:
-        array=dataset.read()
-        """
-dataset.read() with no arguments, rasterio reads ALL bands and returns them as a single numpy array. The shape is always (bands, height, width). So a Sentinel-2 image with 13 bands covering a 512×512 pixel area returns an array of shape (13, 512, 512).
-        """
-        metadata={
-            "transform":dataset.transform, #the affine transformation that maps pixel coordinates to geographic coordinates
-            "crs":dataset.crs, #the coordinate reference system (CRS) of the image, which defines how the geographic coordinates are represented
-            "shape":dataset.shape,#the dimensions of the image in pixels (height, width)
-            "dtype":dataset.dtypes[0],#the data type of the pixel values (e.g., uint16, float32)
-            "count":dataset.count,#the number of bands in the image
-            "bounds":dataset.bounds # It represents how much of that specific wavelength of light bounced back from the Earth's surface into the satellite's sensor at that location.
-            
-        }
-        return array, metadata
-    
 
-"""_summary_
- Rasterio opens GeoTIFFs and preserves both pieces together.-the actual pixel data and the geographical metadata
- Each number in this array is a Digital Number (DN) 
-  It represents how much of that specific wavelength of light bounced back from the Earth's surface into the satellite's sensor at that location.
- 
+# ── These MUST match Colab exactly ───────────────────────────
+
+def normalize_channel(ch, method='minmax'):
     """
-    
-def reproject_to_common_crs(src_array,src_meta,target_crs):
-    src_crs=src_meta["crs"]
-    src_transform=src_meta["transform"]
-    bands, height, width=src_array.shape
-    
-    new_transform, new_width, new_height=calculate_default_transform(
-        src_crs,
-        target_crs, 
-        width,
-        height, 
-        *rasterio.transform.array_bounds(height,width,src_transform))
-    reprojected=np.zeros((bands,new_height,new_width),dtype=src_meta["dtype"])
-    
-    for i in range(bands):
-        reproject(
-            source=src_array[i],
-            destination=reprojected[i],
-            src_transform=src_transform,
-            src_crs=src_crs,
-            dst_transform=new_transform,
-            dst_crs=target_crs,
-            resampling=Resampling.bilinear
-            
-            
-        )
-    
-    new_meta=src_meta.copy()
-    new_meta.update({
-        "crs":target_crs,
-        "transform":new_transform,
-        "width":new_width,  
-        "height":new_height
-    })
-    
-    return reprojected, new_meta
+    Normalize a 2D array.
+    MUST match the normalization used during Colab training.
+    Optical → minmax, SAR → zscore
     """
-    Reprojection mathematically re-expresses every pixel's location in a new coordinate system. After reprojection, pixel (100, 200) in your Sentinel-1 SAR image and pixel (100, 200) in your Sentinel-2 optical image both represent the exact same 10×10 metre square of ground in Turkey.
-    When you save your damage zones to PostGIS and display them on your Leaflet/Mapbox dashboard, the coordinates must be in WGS84. So you reproject everything to WGS84 early in the pipeline and keep it consistent throughout.
+    ch = ch.astype(np.float32)
+    if method == 'minmax':
+        mn, mx = np.nanmin(ch), np.nanmax(ch)
+        if mx > mn:
+            return (ch - mn) / (mx - mn)
+        return np.zeros_like(ch)
+    elif method == 'zscore':
+        mu = np.nanmean(ch)
+        sigma = np.nanstd(ch)
+        if sigma > 0:
+            return np.clip((ch - mu) / sigma, -3, 3) / 6 + 0.5
+        return np.full_like(ch, 0.5)
+    return ch
+
+
+def compute_ndvi(red, nir):
+    d = nir + red
+    return np.clip(np.where(d > 0, (nir - red) / d, 0.0), -1.0, 1.0)
+
+def compute_ndwi(green, nir):
+    d = green + nir
+    return np.clip(np.where(d > 0, (green - nir) / d, 0.0), -1.0, 1.0)
+
+def compute_nbr(nir, swir):
+    d = nir + swir
+    return np.clip(np.where(d > 0, (nir - swir) / d, 0.0), -1.0, 1.0)
+
+def compute_sar_coherence(vv, vh, window=5):
+    a = vv.astype(np.complex64)
+    b = vh.astype(np.complex64)
+    cross = uniform_filter(np.abs(a * np.conj(b)), size=window)
+    pa    = uniform_filter(np.real(a * np.conj(a)), size=window)
+    pb    = uniform_filter(np.real(b * np.conj(b)), size=window)
+    denom = np.sqrt(pa * pb)
+    coh   = np.where(denom > 0, cross / denom, 0.0)
+    return np.clip(np.abs(coh), 0.0, 1.0).astype(np.float32)
+
+
+def build_9channel_input(optical_array, sar_array, target_hw=512):
     """
-    
-def coregister_images (before_array, before_meta, after_array, after_meta):
-    ref_transform=before_meta["transform"]
-    ref_crs=before_meta["crs"]
-    ref_shape=(before_meta["height"], before_meta["width"])
-    
-    bands=after_array.shape[0]
-    
-    aligned_after=np.zeros(
-        (bands, ref_shape[0], ref_shape[1]),
-        dtype=after_meta["dtype"]
-    )
-    
-    for i in range(bands):
-        reproject(
-            source=after_array[i],
-            destination=aligned_after[i],
-            src_transform=after_meta["transform"],
-            src_crs=after_meta["crs"],
-            dst_transform=ref_transform,
-            dst_crs=ref_crs,
-            resampling=Resampling.bilinear
-        )
-        
-    aligned_meta=after_meta.copy()
-    aligned_meta.update({
-        "transform":ref_transform,
-        "crs":ref_crs,
-        "width":ref_shape[1],
-        "height":ref_shape[0]
-    })
-    
-    return aligned_after, aligned_meta,before_array, before_meta
+    Converts raw optical + SAR arrays into the exact 9-channel
+    input format the trained model expects.
 
-    """
-     Co-regis tration solves a different, subtler problem: even after both images are in WGS84, they might still not align at the pixel level.  
-     handleing the false positives
-    """
-    
-def compute_coherence(sar_before, sar_after, window_Size=5):
-    before = sar_before.astype(np.complex64)
-    after = sar_after.astype(np.complex64)
-
-    # product of complex numbers: before * conj(after)
-    cross = before * np.conj(after)
-
-    power_before = before * np.conj(before)
-    power_after = after * np.conj(after)
-
-    avg_cross = uniform_filter(np.abs(cross), size=window_Size)
-    avg_power_before = uniform_filter(power_before, size=window_Size)
-    avg_power_after = uniform_filter(power_after, size=window_Size)
-
-    denominator = np.sqrt(avg_power_before * avg_power_after)
-
-    coherence = np.where(
-        denominator > 0,
-        avg_cross / denominator,
-        0
-    )
-
-    coherence = np.clip(coherence, 0, 1)
-
-    return coherence.astype(np.float32)
-
-def normalize_image(array, method="minmax"):
-    """Normalize a multi-band image array.
+    CHANNEL LAYOUT (must match Colab training exactly):
+      ch 0: R          (optical, minmax normalized)
+      ch 1: G          (optical, minmax normalized)
+      ch 2: B          (optical, minmax normalized)
+      ch 3: VV_SAR     (SAR, zscore normalized)
+      ch 4: VH_SAR     (SAR, zscore normalized)
+      ch 5: NDVI       (rescaled to [0,1])
+      ch 6: NDWI       (rescaled to [0,1])
+      ch 7: NBR        (rescaled to [0,1])
+      ch 8: Coherence  ([0,1])
 
     Args:
-        array (np.ndarray): shape (bands, h, w)
-        method (str): "minmax" or "zscore"
+      optical_array: (H, W, 3+) numpy array — RGB from Sentinel-2 or Planet
+      sar_array:     (H, W, 2)  numpy array — VV, VH from Sentinel-1
+                     Pass None if SAR unavailable — filled with zeros
+      target_hw:     resize to this square size
 
     Returns:
-        np.ndarray: normalized data same shape
+      stacked: (target_hw, target_hw, 9) float32  values in [0,1]
     """
-    array = array.astype(np.float32)
-    normalized = np.zeros_like(array)
 
-    if method == "minmax":
-        for i in range(array.shape[0]):
-            band = array[i]
-            min_val = np.min(band)
-            max_val = np.max(band)
+    H = target_hw
 
-            if max_val - min_val == 0:
-                normalized[i] = 0.0
-            else:
-                normalized[i] = (band - min_val) / (max_val - min_val)
-    elif method == "zscore":
-        for i in range(array.shape[0]):
-            band = array[i]
-            mean = np.nanmean(band)
-            std = np.nanstd(band)
+    # ── Resize optical to target_hw ───────────────────────────
+    opt = optical_array.astype(np.float32)
+    if opt.ndim == 2:
+        opt = np.stack([opt, opt, opt], axis=-1)
+    opt = opt[:, :, :3]  # Keep only RGB
 
-            if std == 0:
-                normalized[i] = 0.0
-            else:
-                normalized[i] = (band - mean) / std
+    if opt.shape[0] != H or opt.shape[1] != H:
+        opt = cv2.resize(opt, (H, H), interpolation=cv2.INTER_LINEAR)
+
+    # ── Resize SAR or create zeros ────────────────────────────
+    if sar_array is not None:
+        sar = sar_array.astype(np.float32)
+        if sar.ndim == 2:
+            sar = np.stack([sar, sar], axis=-1)
+        sar = sar[:, :, :2]
+        if sar.shape[0] != H or sar.shape[1] != H:
+            sar = np.stack([
+                cv2.resize(sar[:,:,c], (H,H), interpolation=cv2.INTER_LINEAR)
+                for c in range(2)
+            ], axis=-1)
     else:
-        raise ValueError(f"Unknown normalization method: {method}")
-    # summary comment removed; not part of function
-def tile_image(array, tile_size=256, overlap=32):
-    bands, height, width = array.shape
+        # No SAR available — fill with zeros
+        # Model learned to handle this from training
+        sar = np.zeros((H, H, 2), dtype=np.float32)
+
+    # ── Normalize optical (minmax per channel) ────────────────
+    opt_norm = np.stack([
+        normalize_channel(opt[:,:,c], 'minmax') for c in range(3)
+    ], axis=-1)
+
+    # ── Normalize SAR (zscore per channel) ───────────────────
+    sar_norm = np.stack([
+        normalize_channel(sar[:,:,c], 'zscore') for c in range(2)
+    ], axis=-1)
+
+    # ── Spectral indices ──────────────────────────────────────
+    R, G, B = opt_norm[:,:,0], opt_norm[:,:,1], opt_norm[:,:,2]
+    # Approximate NIR (same approximation as Colab training)
+    NIR_approx = R * 0.4 + G * 0.3 + B * 0.3
+
+    ndvi = (compute_ndvi(R, NIR_approx) + 1) / 2
+    ndwi = (compute_ndwi(G, NIR_approx) + 1) / 2
+    nbr  = (compute_nbr(NIR_approx, sar_norm[:,:,0]) + 1) / 2
+    coh  = compute_sar_coherence(sar_norm[:,:,0], sar_norm[:,:,1])
+
+    # ── Stack into 9 channels ─────────────────────────────────
+    stacked = np.concatenate([
+        opt_norm,                       # ch 0,1,2
+        sar_norm,                       # ch 3,4
+        ndvi[:,:,np.newaxis],           # ch 5
+        ndwi[:,:,np.newaxis],           # ch 6
+        nbr[:,:,np.newaxis],            # ch 7
+        coh[:,:,np.newaxis]             # ch 8
+    ], axis=-1).astype(np.float32)
+
+    return stacked
+
+
+def tile_array(array, tile_size=256, overlap=32):
+    """Split array into overlapping tiles. Returns tiles + positions."""
+    H, W   = array.shape[:2]
     stride = tile_size - overlap
-    tiles = []
-    positions = []
+    tiles, positions = [], []
     y = 0
-
-
-def summarize_array(array):
-    """Return a simple text summary of a numpy array for debugging."""
-    import logging
-    logging.debug(f"array shape {array.shape} dtype {array.dtype}")
-    return f"shape={array.shape}, dtype={array.dtype}, min={array.min()}, max={array.max()}"
-
-    while y < height:
-        y_start = min(y, height - tile_size)
-        y_end = y_start + tile_size
-
-        x = 0
-        while x < width:
-            x_start = min(x, width - tile_size)
-            x_end = x_start + tile_size
-
-            tile = array[:, y_start:y_end, x_start:x_end]
-            tiles.append(tile)
-            positions.append((y_start, y_end, x_start, x_end))
-
+    while y < H:
+        ys = min(y, H - tile_size)
+        ye = ys + tile_size
+        x  = 0
+        while x < W:
+            xs = min(x, W - tile_size)
+            xe = xs + tile_size
+            tiles.append(array[ys:ye, xs:xe])
+            positions.append((ys, ye, xs, xe))
             x += stride
-
         y += stride
-    # return after loops
     return tiles, positions
 
-def stitch_tiles(tiles, positions, full_height, full_width, overlap=32):
-    """Reconstruct full image from tiles with overlaps."""
+
+def stitch_tiles(tile_predictions, positions,
+                  full_h, full_w, num_classes=4, overlap=32):
+    """
+    Reassembles tile predictions into a full damage map.
+    Uses centre-only regions to avoid boundary artifacts.
+    """
     margin = overlap // 2
-    output = np.zeros((full_height, full_width), dtype=np.float32)
-    count = np.zeros((full_height, full_width), dtype=np.float32)
+    output = np.zeros((num_classes, full_h, full_w), dtype=np.float32)
+    count  = np.zeros((full_h, full_w), dtype=np.float32)
 
-    for tile, pos in zip(tiles, positions):
-        y_start, y_end, x_start, x_end = pos
-        y_s = y_start + margin
-        y_e = y_end - margin
-        x_s = x_start + margin
-        x_e = x_end - margin
+    for pred, (ys, ye, xs, xe) in zip(tile_predictions, positions):
+        # pred shape: (num_classes, tile_h, tile_w)
+        cy_s = ys + margin
+        cy_e = ye - margin
+        cx_s = xs + margin
+        cx_e = xe - margin
 
-        output[y_s:y_e, x_s:x_e] += tile[margin:-margin, margin:-margin]
-        count[y_s:y_e, x_s:x_e] += 1
+        output[:, cy_s:cy_e, cx_s:cx_e] += \
+            pred[:, margin:-margin, margin:-margin]
+        count[cy_s:cy_e, cx_s:cx_e] += 1
 
     # Average overlapping regions
-    output = np.where(count > 0, output / count, 0)
-    return output
+    count = np.maximum(count, 1)
+    output = output / count[np.newaxis, :, :]
 
-    """load raw images-> reproject to common CRS-> coregister before and after images-> compute coherence-> normalize-> tile for model input
-    
-    """
-
-
-def preprocess_event(event_name, config_path="configs/config.yaml"):
-    
-    # ── Step 1: Load config ──────────────────────────────
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    
-    raw_dir       = Path(config["paths"]["raw_data_dir"])
-    processed_dir = Path(config["paths"]["processed_data_dir"])
-    tile_size     = config["sentinel"]["tile_size"]
-    overlap       = config["sentinel"]["overlap"]
-    
-    event_raw  = raw_dir / event_name
-    event_out  = processed_dir / event_name
-    event_out.mkdir(parents=True, exist_ok=True)
-    
-    print(f"[1/7] Starting preprocessing for event: {event_name}")
-    
-    # ── Step 2: Load raw images ──────────────────────────
-    s2_before_path = event_raw / "sentinel2_before.tif"
-    s2_after_path  = event_raw / "sentinel2_after.tif"
-    s1_before_path = event_raw / "sentinel1_before.tif"
-    s1_after_path  = event_raw / "sentinel1_after.tif"
-    
-    s2_before, s2_before_meta = load_geotiff(s2_before_path)
-    s2_after,  s2_after_meta  = load_geotiff(s2_after_path)
-    s1_before, s1_before_meta = load_geotiff(s1_before_path)
-    s1_after,  s1_after_meta  = load_geotiff(s1_after_path)
-    
-    print(f"[2/7] Loaded raw images.")
-    print(f"      S2 before shape: {s2_before.shape}")
-    print(f"      S1 before shape: {s1_before.shape}")
-    
-    # ── Step 3: Reproject everything to WGS84 ───────────
-    s2_before, s2_before_meta = reproject_to_common_crs(s2_before, s2_before_meta)
-    s2_after,  s2_after_meta  = reproject_to_common_crs(s2_after,  s2_after_meta)
-    s1_before, s1_before_meta = reproject_to_common_crs(s1_before, s1_before_meta)
-    s1_after,  s1_after_meta  = reproject_to_common_crs(s1_after,  s1_after_meta)
-    
-    print("[3/7] Reprojected all images to WGS84.")
-    
-    # ── Step 4: Co-register — align after to before ─────
-    s2_before, s2_before_meta, s2_after, s2_after_meta = coregister_images(
-        s2_before, s2_after, s2_before_meta, s2_after_meta
-    )
-    s1_before, s1_before_meta, s1_after, s1_after_meta = coregister_images(
-        s1_before, s1_after, s1_before_meta, s1_after_meta
-    )
-    
-    print("[4/7] Co-registered before/after image pairs.")
-    
-    # ── Step 5: Compute SAR coherence ───────────────────
-    # Use VV band (index 0) for coherence computation
-    coherence_before = compute_coherence(
-        s1_before[0], s1_before[0],   # before vs before = baseline
-        window_size=5
-    )
-    coherence_after = compute_coherence(
-        s1_before[0], s1_after[0],    # before vs after = actual change
-        window_size=5
-    )
-    coherence_delta = coherence_after - coherence_before
-    
-    print("[5/7] Computed SAR coherence maps.")
-    
-    # ── Step 6: Compute spectral indices ────────────────
-    band_dict_before = {
-        "red":   s2_before[3],   # Band 4 = Red
-        "nir":   s2_before[7],   # Band 8 = NIR
-        "green": s2_before[2],   # Band 3 = Green
-        "swir":  s2_before[11],  # Band 12 = SWIR2
-    }
-    band_dict_after = {
-        "red":   s2_after[3],
-        "nir":   s2_after[7],
-        "green": s2_after[2],
-        "swir":  s2_after[11],
-    }
-    
-    indices = compute_all_indices(band_dict_before, band_dict_after)
-    
-    print("[6/7] Computed spectral indices (NDVI, NDWI, NBR, deltas).")
-    
-    # ── Step 7: Stack all channels into one array ────────
-    # Shape: (22, H, W)
-    full_array = np.concatenate([
-        s2_after,                                          # 6 optical bands
-        s1_after,                                          # 4 SAR bands (VV, VH x2)
-        np.stack([                                         # 5 indices
-            indices["ndvi_post"],
-            indices["ndwi_post"],
-            indices["nbr_post"],
-            indices["delta_ndvi"],
-            indices["delta_nbr"]
-        ]),
-        np.stack([                                         # 3 CCD bands
-            coherence_before,
-            coherence_after,
-            coherence_delta
-        ]),
-    ], axis=0)
-    
-    print(f"      Stacked array shape: {full_array.shape}")  
-    # Expected: (18, H, W) — remaining 4 channels added later
-    
-    # ── Step 8: Normalize ────────────────────────────────
-    # Use minmax for optical + indices, zscore for SAR
-    optical_normalized = normalize_image(full_array[:6],   method='minmax')
-    sar_normalized     = normalize_image(full_array[6:10], method='zscore')
-    indices_normalized = normalize_image(full_array[10:],  method='minmax')
-    
-    normalized_array = np.concatenate([
-        optical_normalized,
-        sar_normalized,
-        indices_normalized
-    ], axis=0)
-    
-    print("[7/7] Normalized all channels.")
-    
-    # ── Step 9: Tile and save ────────────────────────────
-    tiles, positions = tile_image(
-        normalized_array,
-        tile_size=tile_size,
-        overlap=overlap
-    )
-    
-    tiles_dir = event_out / "tiles"
-    tiles_dir.mkdir(exist_ok=True)
-    
-    for idx, (tile, pos) in enumerate(zip(tiles, positions)):
-        tile_path = tiles_dir / f"tile_{idx:04d}.npy"
-        np.save(tile_path, tile)
-    
-    # Save positions so you can stitch results back later
-    positions_path = event_out / "tile_positions.npy"
-    np.save(positions_path, positions)
-    
-    print(f"Preprocessing complete.")
-    print(f"Saved {len(tiles)} tiles to: {tiles_dir}")
-    
-    return tiles_dir, positions_path
+    return output.argmax(axis=0).astype(np.uint8)  # (H, W) damage class map
