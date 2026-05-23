@@ -1,22 +1,32 @@
-# docker-compose placeholder
-# Added for testing commit history
+# docker-compose.yml — SIMPLIFIED VERSION
+# Down from 6 services to 2. SQLite lives inside the API container.
 
-version: "3.8"
+version: '3.8'
+
 services:
-  web:
-    image: python:3.13-slim
-    command: bash -c "uvicorn src.api.main:app --host 0.0.0.0 --port 8000"
-    volumes:
-      - ./:/app
-    working_dir: /app
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    depends_on:
-      - redis
+    env_file: .env
+    volumes:
+      - ./data:/app/data                         # satellite images
+      - ./models/checkpoints:/app/checkpoints    # model weights
+      - ./disaster_ai.db:/app/disaster_ai.db     # SQLite database file
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
 
-  redis:
-    image: redis:7
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile.simple              # lightweight Vite server
     ports:
-      - "6379:6379"
-
-# You can extend this file with database, celery worker, etc.
+      - "3000:3000"
+    depends_on:
+      - api
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    restart: unless-stopped
