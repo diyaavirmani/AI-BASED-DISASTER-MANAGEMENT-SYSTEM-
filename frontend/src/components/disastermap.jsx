@@ -1,107 +1,141 @@
-import React, { useEffect, useState, useCallback } from "react";
-import Map, { Source, Layer, Popup } from "react-map-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+﻿import React, { useEffect, useState, useCallback } from 'react';
+import Map, { Source, Layer, Popup } from 'react-map-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 
-import { fetchDamageZones } from "../services/api";
-import { connectWebSocket } from "../services/websocket";
+import { fetchDamageZones } from '../services/api';
+import { useWebSocket } from '../services/websocket';
+import { API_BASE_URL, MAPBOX_TOKEN } from '../config';
 
-const MAPBOX_TOKEN = process.env.REACT_APP_MAPBOX_TOKEN;
+const DAMAGE_LAYER = {
+  id: 'damage-layer',
+  type: 'fill',
+  paint: {
+    'fill-color': [
+      'match',
+      ['get', 'damage_level'],
+      0, '#22c55e',
+      1, '#eab308',
+      2, '#f97316',
+      3, '#ef4444',
+      '#94a3b8'
+    ],
+    'fill-opacity': 0.72,
+    'fill-outline-color': '#0f172a'
+  }
+};
 
+const SAR_LAYER = {
+  id: 'sar-layer',
+  type: 'fill',
+  paint: {
+    'fill-color': '#0ea5e9',
+    'fill-opacity': 0.35,
+    'fill-outline-color': '#0284c7'
+  }
+};
 
-// --------------------------------------------------
-// 166. MAP COMPONENT
-// --------------------------------------------------
 const DisasterMap = ({ activeEventId }) => {
   const [geoData, setGeoData] = useState(null);
   const [selectedFeature, setSelectedFeature] = useState(null);
   const [viewState, setViewState] = useState({
-    longitude: 77.1025, // default India
-    latitude: 28.7041,
-    zoom: 5,
+    longitude: 0,
+    latitude: 20,
+    zoom: 2
   });
+  const [layerType, setLayerType] = useState('damage');
 
-  const [layerType, setLayerType] = useState("damage"); // toggle
+  const { latestMessage } = useWebSocket(`${API_BASE_URL.replace(/^http/, 'ws')}/ws/updates`);
 
-
-  // --------------------------------------------------
-  // 167. FETCH DAMAGE ZONES
-  // --------------------------------------------------
   useEffect(() => {
-    if (!activeEventId) return;
+    if (!activeEventId) {
+      setGeoData(null);
+      return;
+    }
 
-    const loadData = async () => {
-      const data = await fetchDamageZones(activeEventId);
-      console.log("API response:", data); // 🔥 trace step 1
-      setGeoData(data);
+    const loadZones = async () => {
+      try {
+        const data = await fetchDamageZones(activeEventId);
+        console.log('Fetched damage zones:', data);
+        setGeoData(data);
+      } catch (err) {
+        console.error('Failed to load damage zones:', err);
+        setGeoData(null);
+      }
     };
 
-    loadData();
+    loadZones();
   }, [activeEventId]);
 
-
-  // --------------------------------------------------
-  // 170. REAL-TIME UPDATES (WebSocket)
-  // --------------------------------------------------
   useEffect(() => {
-    const ws = connectWebSocket((update) => {
-      console.log("WebSocket update:", update);
-      // optionally merge new GeoJSON
-    });
-
-    return () => ws.close();
-  }, []);
-
-
-  // --------------------------------------------------
-  // 168. DAMAGE LAYER STYLE
-  // --------------------------------------------------
-  const damageLayer = {
-    id: "damage-layer",
-    type: "fill",
-    paint: {
-      "fill-color": [
-        "match",
-        ["get", "damage_level"],
-        0, "#00FF00",   // green
-        1, "#FFFF00",   // yellow
-        2, "#FFA500",   // orange
-        3, "#FF0000",   // red
-        "#CCCCCC"
-      ],
-      "fill-opacity": 0.6,
-    },
-  };
-
-
-  // SAR overlay (dummy style)
-  const sarLayer = {
-    id: "sar-layer",
-    type: "fill",
-    paint: {
-      "fill-color": "#00FFFF",
-      "fill-opacity": 0.3,
-    },
-  };
-
-
-  // --------------------------------------------------
-  // 169. CLICK HANDLER (POPUP)
-  // --------------------------------------------------
-  const onMapClick = useCallback((event) => {
-    const feature = event.features && event.features[0];
-    if (feature) {
-      setSelectedFeature(feature);
+    if (!latestMessage || latestMessage.type !== 'damage_update') {
+      return;
     }
+
+    if (latestMessage.event_id !== activeEventId) {
+      return;
+    }
+
+    console.log('Received real-time damage update:', latestMessage);
+
+    if (latestMessage.geojson) {
+      setGeoData(latestMessage.geojson);
+      return;
+    }
+
+    setGeoData((prev) => {
+      if (!prev || !prev.features || !latestMessage.feature) {
+        return prev;
+      }
+
+      const updated = prev.features.map((feature) => {
+        if (feature.properties?.zone_id === latestMessage.feature.properties?.zone_id) {
+          return {
+            ...feature,
+            properties: {
+              ...feature.properties,
+              ...latestMessage.feature.properties
+            }
+          };
+        }
+        return feature;
+      });
+
+      return { ...prev, features: updated };
+    });
+  }, [latestMessage, activeEventId]);
+
+  const onMapClick = useCallback((event) => {
+    const feature = event.features?.[0];
+    if (!feature) {
+      setSelectedFeature(null);
+      return;
+    }
+
+    setSelectedFeature({
+      properties: feature.properties,
+      lngLat: event.lngLat
+    });
   }, []);
 
+  if (!activeEventId) {
+    return (
+      <div className="card" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: 'var(--color-text-secondary)', textAlign: 'center' }}>
+          Select a disaster event to load the damage map.
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ width: "100%", height: "100%" }}>
-
-      {/* 170. TOGGLE */}
-      <div style={{ position: "absolute", zIndex: 1, padding: 10 }}>
-        <button onClick={() => setLayerType("damage")}>Damage</button>
-        <button onClick={() => setLayerType("sar")}>SAR</button>
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 10, display: 'flex', gap: '0.5rem' }}>
+        <button className="btn btn-secondary" onClick={() => setLayerType('damage')}>
+          Damage
+        </button>
+        <button className="btn btn-secondary" onClick={() => setLayerType('sar')}>
+          SAR
+        </button>
       </div>
 
       <Map
@@ -109,33 +143,30 @@ const DisasterMap = ({ activeEventId }) => {
         onMove={(evt) => setViewState(evt.viewState)}
         mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
         mapboxAccessToken={MAPBOX_TOKEN}
-        style={{ width: "100%", height: "100%" }}
-        interactiveLayerIds={["damage-layer"]}
+        style={{ width: '100%', height: '100%' }}
+        interactiveLayerIds={['damage-layer']}
         onClick={onMapClick}
       >
-
-        {/* 168. SOURCE + LAYER */}
         {geoData && (
           <Source id="damage-source" type="geojson" data={geoData}>
-            <Layer {...(layerType === "damage" ? damageLayer : sarLayer)} />
+            <Layer {...(layerType === 'damage' ? DAMAGE_LAYER : SAR_LAYER)} />
           </Source>
         )}
 
-        {/* 169. POPUP */}
         {selectedFeature && (
           <Popup
-            longitude={selectedFeature.geometry.coordinates[0][0][0]}
-            latitude={selectedFeature.geometry.coordinates[0][0][1]}
+            longitude={selectedFeature.lngLat[0]}
+            latitude={selectedFeature.lngLat[1]}
+            anchor="bottom"
             onClose={() => setSelectedFeature(null)}
           >
-            <div>
-              <p><strong>Damage Level:</strong> {selectedFeature.properties.damage_level}</p>
-              <p><strong>Population:</strong> {selectedFeature.properties.affected_population_estimate}</p>
-              <p><strong>Assessed At:</strong> {selectedFeature.properties.assessed_at}</p>
+            <div style={{ minWidth: '160px' }}>
+              <p style={{ margin: '0 0 0.5rem 0' }}><strong>Damage Level:</strong> {selectedFeature.properties.damage_level ?? 'N/A'}</p>
+              <p style={{ margin: '0 0 0.5rem 0' }}><strong>Population:</strong> {selectedFeature.properties.affected_population_estimate ?? 'N/A'}</p>
+              <p style={{ margin: 0 }}><strong>Assessed At:</strong> {selectedFeature.properties.assessed_at ?? 'Unknown'}</p>
             </div>
           </Popup>
         )}
-
       </Map>
     </div>
   );

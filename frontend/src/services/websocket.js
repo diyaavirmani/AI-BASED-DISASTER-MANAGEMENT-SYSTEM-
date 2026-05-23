@@ -1,98 +1,81 @@
+﻿import { useEffect, useRef, useState, useCallback } from 'react';
 
-import { useEffect, useRef, useState, useCallback } from "react";
-
-
-// --------------------------------------------------
-// 172. CUSTOM HOOK
-// --------------------------------------------------
 export const useWebSocket = (url) => {
   const [latestMessage, setLatestMessage] = useState(null);
+  const [connected, setConnected] = useState(false);
   const wsRef = useRef(null);
   const reconnectAttempts = useRef(0);
+  const reconnectTimer = useRef(null);
 
-  // --------------------------------------------------
-  // 174. EXPONENTIAL BACKOFF DELAYS
-  // --------------------------------------------------
-  const getBackoffDelay = () => {
-    const delays = [3000, 6000, 12000, 30000]; // 3s → 30s
-    return delays[Math.min(reconnectAttempts.current, delays.length - 1)];
+  const getBackoffDelay = (attempt) => {
+    const delays = [3000, 6000, 12000, 30000];
+    return delays[Math.min(attempt, delays.length - 1)];
   };
 
-  // --------------------------------------------------
-  // CONNECT FUNCTION
-  // --------------------------------------------------
   const connect = useCallback(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      return;
+    }
+
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
-    // ---------------------------
-    // ON OPEN
-    // ---------------------------
     ws.onopen = () => {
-      console.log("✅ WebSocket connected");
-      reconnectAttempts.current = 0; // reset backoff
+      console.log('✅ WebSocket connected');
+      reconnectAttempts.current = 0;
+      setConnected(true);
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+        reconnectTimer.current = null;
+      }
     };
 
-    // ---------------------------
-    // 175. ON MESSAGE
-    // ---------------------------
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         setLatestMessage(data);
       } catch (err) {
-        console.error("Invalid JSON:", event.data);
+        console.error('WebSocket received invalid JSON:', event.data);
       }
     };
 
-    // ---------------------------
-    // ON ERROR
-    // ---------------------------
     ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
+      console.error('WebSocket error:', err);
     };
 
-    // ---------------------------
-    // 173. ON CLOSE (RECONNECT)
-    // ---------------------------
     ws.onclose = () => {
-      console.warn("⚠️ WebSocket disconnected");
-
-      const delay = getBackoffDelay();
+      console.warn('⚠️ WebSocket disconnected');
+      setConnected(false);
+      const attempt = reconnectAttempts.current;
+      const delay = getBackoffDelay(attempt);
       reconnectAttempts.current += 1;
-
-      setTimeout(() => {
+      reconnectTimer.current = window.setTimeout(() => {
         console.log(`🔄 Reconnecting in ${delay / 1000}s...`);
         connect();
       }, delay);
     };
   }, [url]);
 
-
-  // --------------------------------------------------
-  // INIT CONNECTION
-  // --------------------------------------------------
   useEffect(() => {
     connect();
 
     return () => {
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+      }
       if (wsRef.current) {
         wsRef.current.close();
       }
     };
   }, [connect]);
 
-
-  // --------------------------------------------------
-  // SEND MESSAGE FUNCTION
-  // --------------------------------------------------
-  const sendMessage = (message) => {
+  const sendMessage = useCallback((message) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     } else {
-      console.warn("WebSocket not connected");
+      console.warn('WebSocket not connected');
     }
-  };
+  }, []);
 
-  return { latestMessage, sendMessage };
+  return { latestMessage, connected, sendMessage };
 };
