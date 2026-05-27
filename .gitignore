@@ -216,3 +216,20 @@ frontend/node_modules/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Deep learning checkpoints
+models/checkpoints/*.pth
+models/checkpoints/*.pt
+models/checkpoints/*.onnx
+models/checkpoints/*.ckpt
+
+# Local data files
+data/**/*.tif
+data/**/*.npy
+data/**/*.zip
+data/**/*.geojson
+data/datasets/
+data/processed/
+
+# Local virtual environment
+dms/
