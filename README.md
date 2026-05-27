@@ -228,3 +228,36 @@ To trigger a full damage assessment run:
    ```
 
 The dashboard will load and display damage zones in real time as the background thread tiles and segments the images.
+
+---
+
+## 9. Final Model Comparison
+
+Below is the evaluation summary and comparison between U-Net and HRNet architectures trained on the BRIGHT dataset.
+
+### Evaluation Summary
+
+```
+============================================================
+FINAL MODEL COMPARISON
+============================================================
+Train Samples : 4837
+Val Samples   : 596
+
+Performance
+U-Net  mIoU : 0.4247
+HRNet  mIoU : 0.4134
+
+Winner : U-Net
+Improvement : 0.0113
+```
+
+### Visual Performance & Comparisons
+
+| Model Comparison on BRIGHT Validation Set | Winning Model Summary |
+| :---: | :---: |
+| ![Model Comparison Chart](docs/images/model_comparison_chart.png) | ![Winning Model Summary](docs/images/winning_model_summary.png) |
+
+### Sample Predictions (RGB vs. Ground Truth vs. Prediction)
+
+![Prediction Examples](docs/images/prediction_examples.png)
