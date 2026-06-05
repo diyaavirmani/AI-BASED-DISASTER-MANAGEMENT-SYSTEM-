@@ -2,11 +2,13 @@
 
 ## 1. Project Description
 
-DisasterAI is an end-to-end AI system built to solve a real coordination failure in disaster response — the gap between a disaster happening and authorities knowing where to send help. Traditional response relies on manual surveys and phone reports which are too slow. This system predicts at-risk zones before a disaster, classifies building and area damage from satellite imagery within minutes of an event, and generates optimal resource deployment routes automatically.
+DisasterAI is an end-to-end AI system built to solve a real coordination failure in disaster response — the gap between a disaster happening and authorities knowing where to send help. Traditional response relies on manual surveys and phone reports which are too slow. This system  classifies building and area damage from satellite imagery  of an event, and generates optimal resource deployment routes automatically.
 
-The project operates in two modes simultaneously. Before or during a disaster, an LSTM model runs on historical weather and seismic data to produce a risk heatmap — authorities can pre-position resources to high-risk zones. After a disaster, real satellite images are fetched from Planet Insights Platform and Google Earth Engine, processed into a standardised 9-channel input (optical + SAR radar + spectral indices + coherence), and pushed through a trained U-Net or HRNet segmentation model that labels every pixel as no damage, minor, major, or destroyed. The results are rendered as live GeoJSON polygons on a Mapbox dashboard, and a resource allocation engine uses Dijkstra's algorithm with priority scoring to recommend exactly which rescue teams go where.
+The project operates in two modes simultaneously-
+:- Before or during a disaster, an LSTM model runs on historical weather and seismic data to produce a risk heatmap , authorities can pre-position resources to high-risk zones. 
 
-The entire pipeline runs with zero complex external infrastructure, making it fast, lightweight, and perfect for direct local execution and demos.
+:-After a disaster, real satellite images are fetched from Planet Insights Platform and Google Earth Engine, processed into a standardised 9-channel input (optical + SAR radar + spectral indices + coherence), and pushed through a trained U-Net or HRNet segmentation model that labels every pixel as no damage, minor, major, or destroyed. The results are rendered as live GeoJSON polygons on a Mapbox dashboard, and a resource allocation engine uses Dijkstra's algorithm with priority scoring to recommend exactly which rescue teams go where.
+
 
 ---
 
@@ -14,7 +16,11 @@ The entire pipeline runs with zero complex external infrastructure, making it fa
 
 Three layers stacked on top of each other:
 
-*   **Data Layer** — three satellite sources cover each other's blind spots. Sentinel-2 provides colour optical imagery but fails in clouds and at night. Sentinel-1 SAR radar works 24/7 in any weather but shows change not colour. Landsat provides thermal data for fire detection. Together they produce a 9-channel input per tile. A fourth stream collects crowdsource social media posts and filters them via NLP and CLIP vision to extract verified severity signals.
+*   **Data Layer** — three satellite sources cover each other's blind spots-
+  1)  Sentinel-2 provides colour optical imagery but fails in clouds and at night. 
+  2)  Sentinel-1 SAR radar works 24/7 in any weather but shows change not colour.
+  3) Landsat provides thermal data for fire detection. Together they produce a 9-channel input per tile. 
+  4) A fourth stream collects crowdsource social media posts and filters them via NLP and CLIP vision to extract verified severity signals.
 *   **AI/ML Layer** — U-Net (ResNet50 encoder) and HRNet (W32) both solve the same task — per-pixel damage classification. The LSTM zone predictor operates on time-series weather and seismic data to predict risk before satellite images even exist. A 5-layer severity resolver fuses satellite model output, GDACS alerts, CLIP image analysis, and NLP keywords to produce a single authoritative severity score.
 *   **Decision Layer** — FastAPI serves all model outputs via REST, WebSocket, and Server-Sent Events (SSE). A resource allocation engine takes the damage map, road network, available resources, and population density and produces a ranked deployment list with routes. The React dashboard renders everything on a live Mapbox map.
 
@@ -29,7 +35,7 @@ Two parallel pipelines run:
 
 ---
 
-## 4. What This Project Does
+## 4. Summary:
 
 | Function | Detail |
 |---|---|
@@ -45,7 +51,6 @@ Two parallel pipelines run:
 
 ## 5. Simplified Production Stack
 
-To keep the system highly portable, lightweight, and perfect for hackathons or portfolio demos, we simplified the tech stack down to its core essentials:
 
 | Layer | Technology |
 |---|---|
