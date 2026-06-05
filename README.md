@@ -1,4 +1,4 @@
-# DisasterAI — Smart Disaster Management System
+# DisasterAI  Smart Disaster Management System
 
 ## 1. Project Description
 
@@ -10,7 +10,7 @@ The entire pipeline runs with zero complex external infrastructure, making it fa
 
 ---
 
-## 2. Architecture — Theory First
+## 2. Architecture 
 
 Three layers stacked on top of each other:
 
@@ -20,7 +20,7 @@ Three layers stacked on top of each other:
 
 ---
 
-## 3. How It Works — Theory First
+## 3. How It Works 
 
 Two parallel pipelines run:
 
