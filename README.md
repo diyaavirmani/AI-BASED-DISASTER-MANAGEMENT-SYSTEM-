@@ -80,7 +80,7 @@ Two parallel pipelines run:
 *   **Pre-disaster (LSTM path):** The LSTM processes 30-day sequences of 22 features per zone and outputs a risk score 0–1. Zones above 0.7 are flagged on the dashboard as HIGH risk so emergency authorities can pre-position resources.
 *   **Post-disaster (U-Net path):** When a disaster event is detected (GDACS alert or manual trigger), the system fetches before and after satellite images for the bounding box. The preprocessor aligns images to the same coordinate system, tiles them into 256×256 patches with 32px overlap, and stacks them into 9-channel tensors. The trained segmentation model classifies each tile in the background using FastAPI **BackgroundTasks**. Tiles are stitched back into a full damage map and converted to GeoJSON polygons stored in **SQLite**. The resource allocator scores each damaged zone by severity × population × road accessibility × time urgency, sorts them, assigns nearest available resources, and finds the optimal route using Dijkstra on the OpenStreetMap road graph.
 
-![How It Works Diagram](docs/images/how_it_works.png)
+      ![How It Works Diagram](docs/images/how_it_works.png)
 
 ---
 
@@ -104,9 +104,9 @@ Two parallel pipelines run:
 | Layer | Technology |
 |---|---|
 | **Satellite data** | Planet Insights Platform (Sentinel-1/2), Google Earth Engine (Landsat 8/9) |
-| **Deep learning** | PyTorch, segmentation-models-pytorch, timm (HRNet encoder) |
+| **Deep learning** | pytorch , Unet Vs Hrnet , LSTM |
 | **Model serving** | PyTorch & ONNX Runtime (fast local CPU/GPU inference) |
-| **Image processing** | Rasterio, GDAL, OpenCV, Albumentations, SciPy |
+| **Image processing** | Rasterio, GDAL, Albumentation|
 | **Backend** | FastAPI (with native async **BackgroundTasks** replacing Celery/Redis) |
 | **Database** | SQLite (zero-setup single-file database replacing PostgreSQL/PostGIS) |
 | **ORM** | SQLAlchemy (tables auto-created on startup, replacing Alembic) |
@@ -238,12 +238,7 @@ npm install
 npm run dev
 ```
 
-### 🔗 Service Map
-*   **Frontend Dashboard:** [http://localhost:3000](http://localhost:3000) (or `http://localhost:5173`)
-*   **Interactive API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
-*   **FastAPI Health Status:** [http://localhost:8000/health](http://localhost:8000/health)
 
----
 
 ## 9. Triggering Inference
 
