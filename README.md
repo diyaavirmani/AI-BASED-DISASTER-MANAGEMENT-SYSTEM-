@@ -10,7 +10,11 @@ The project operates in two modes simultaneously-
 :-After a disaster, real satellite images are fetched from Planet Insights Platform and Google Earth Engine, processed into a standardised 9-channel input (optical + SAR radar + spectral indices + coherence), and pushed through a trained U-Net or HRNet segmentation model that labels every pixel as no damage, minor, major, or destroyed. The results are rendered as live GeoJSON polygons on a Mapbox dashboard, and a resource allocation engine uses Dijkstra's algorithm with priority scoring to recommend exactly which rescue teams go where.
 
 
-### The BRIGHT Dataset
+## 2. Data Description
+
+The DisasterAI system utilizes separate dataset inputs for its two main models: the U-Net damage segmentation model (post-disaster satellite imagery) and the LSTM zone risk predictor (pre-disaster time-series data).
+
+### A. U-Net Damage Segmentation (BRIGHT Dataset)
 
 DisasterAI is trained and evaluated on **BRIGHT** (Building damage classification and change detection dataset in multimodal satellite Imagery). 
 
@@ -20,9 +24,40 @@ It supports not only the development of supervised deep models, but also the tes
 
 ![BRIGHT Dataset Overview](docs/images/bright_dataset.png)
 
+### B. LSTM Zone Risk Predictor (Pre-Disaster Time-Series)
+
+This multi-modal time-series data is used to predict localized disaster risk prior to or during an event. It integrates weather signals, seismic tremors, and ground truth disaster records:
+
+#### 1. Meteorological Data (Open-Meteo)
+This dataset tracks the atmospheric conditions for each zone. Since disasters like floods and wildfires are heavily influenced by weather, we fetch a 60-day history leading up to the target date.
+*   **Source:** [Open-Meteo API](https://open-meteo.com/)
+*   **Key Features:**
+    *   **Temperature (`temp_max`, `temp_min`, `temp_mean`):** Used to detect heatwaves (wildfire risk) or extreme cold.
+    *   **Precipitation (`precipitation`):** Crucial for flood prediction and soil saturation analysis.
+    *   **Wind Speed (`windspeed_max`):** Helps identify storm conditions or wildfire spread potential.
+    *   **Humidity (`humidity`):** High humidity often precedes floods, while low humidity is a precursor to wildfires.
+
+#### 2. Seismic Data (USGS)
+This dataset monitors the movement of the Earth's crust. It is vital for predicting earthquakes and volcanic eruptions.
+*   **Source:** [USGS Earthquake API](https://earthquake.usgs.gov/)
+*   **Search Parameters:** We query every event with a magnitude > 1.0 within a 300km radius of each zone's coordinates.
+*   **Key Features:**
+    *   **`quake_count`:** The frequency of tremors (increased activity often precedes larger events).
+    *   **`max_magnitude`:** The strongest quake recorded that day.
+    *   **`total_energy`:** Calculated using the proxy $10^{1.5 \times \text{magnitude}}$, which represents the actual physical energy released, rather than just the logarithmic scale value.
+    *   **`depth_mean`:** Shorter-depth quakes typically cause more surface damage and can indicate different types of tectonic stress.
+
+#### 3. Historical Disaster Records (GDACS)
+While the first two datasets are 'signals', this dataset provides the 'ground truth' labels for historical events.
+*   **Source:** [GDACS API](https://www.gdacs.org/)
+*   **Data Types:** Covers Earthquakes (EQ), Floods (FL), Tropical Cyclones (TC), Volcanoes (VO), and Wildfires (WF).
+*   **Role in Model:** We use this to identify exactly when and where disasters occurred. We then label the 30-day window before these events as Positive (1) and windows where no disaster occurred as Negative (0). This allows the LSTM to learn the 'signature' patterns that lead up to a catastrophe.
+
+Together, these create a multi-modal time series that looks for correlations—like a combination of specific seismic energy patterns and high precipitation—that might signal a localized risk.
+
 ---
 
-## 2. Architecture 
+## 3. Architecture 
 
 Three layers stacked on top of each other:
 
@@ -38,7 +73,7 @@ Three layers stacked on top of each other:
 
 ---
 
-## 3. How It Works 
+## 4. How It Works 
 
 Two parallel pipelines run:
 
@@ -49,7 +84,7 @@ Two parallel pipelines run:
 
 ---
 
-## 4. Summary:
+## 5. Summary:
 
 | Function | Detail |
 |---|---|
@@ -63,7 +98,7 @@ Two parallel pipelines run:
 
 ---
 
-## 5. Simplified Production Stack
+## 6. Simplified Production Stack
 
 
 | Layer | Technology |
@@ -82,7 +117,7 @@ Two parallel pipelines run:
 
 ---
 
-## 6. Repository Structure
+## 7. Repository Structure
 
 ```
 disaster-ai-system/
@@ -151,12 +186,12 @@ disaster-ai-system/
 ├── scripts/export_onnx.py            # PyTorch → ONNX export
 ├── configs/config.yaml               # Central tunable config settings
 ├── Dockerfile                        # Backend FastAPI container
-└── docker-compose.yml                # Main 2 services
+│   └── docker-compose.yml                # Main 2 services
 ```
 
 ---
 
-## 7. Run Locally
+## 8. Run Locally
 
 **Prerequisites:** Docker Desktop or standard Python 3.10+.
 
@@ -210,7 +245,7 @@ npm run dev
 
 ---
 
-## 8. Triggering Inference
+## 9. Triggering Inference
 
 To trigger a full damage assessment run:
 
@@ -231,11 +266,13 @@ The dashboard will load and display damage zones in real time as the background 
 
 ---
 
-## 9. Final Model Comparison
+## 10. Final Model Comparison
 
-Below is the evaluation summary and comparison between U-Net and HRNet architectures trained on the BRIGHT dataset.
+Below are the training curves, evaluation metrics, and performance summaries for both the U-Net Damage Segmentation model (satellite imagery) and the LSTM Zone Risk Predictor (time-series).
 
-### Evaluation Summary
+### A. U-Net & HRNet Damage Segmentation (BRIGHT Dataset)
+
+#### Evaluation Summary
 
 ```
 ============================================================
@@ -252,12 +289,31 @@ Winner : U-Net
 Improvement : 0.0113
 ```
 
-### Visual Performance & Comparisons
+#### Visual Performance & Comparisons
 
 | Model Comparison on BRIGHT Validation Set | Winning Model Summary |
 | :---: | :---: |
 | ![Model Comparison Chart](docs/images/model_comparison_chart.png) | ![Winning Model Summary](docs/images/winning_model_summary.png) |
 
-### Sample Predictions (RGB vs. Ground Truth vs. Prediction)
+#### Sample Predictions (RGB vs. Ground Truth vs. Prediction)
 
 ![Prediction Examples](docs/images/prediction_examples.png)
+
+---
+
+### B. LSTM Zone Risk Predictor (Pre-Disaster Path)
+
+#### Training Curves
+Below are the training and validation curves showing training loss, validation loss, AUC-ROC, Recall, F1 Score, and Precision across training epochs.
+
+![LSTM Training Curves](docs/images/lstm_training_curves.png)
+
+#### Evaluation & Metrics
+The evaluation panel displays the confusion matrix, ROC curve, and risk score distribution at threshold 0.5 and 0.3.
+
+![LSTM Evaluation Metrics](docs/images/lstm_evaluation.png)
+
+#### Zone Risk Predictions Map
+A global map displaying the predicted risk scores for both historical disaster events and negative control zones (low/medium/high risk classification).
+
+![LSTM Zone Risk Predictions Map](docs/images/lstm_predictions.png)
